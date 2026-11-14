@@ -131,7 +131,7 @@ tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 | [#17](https://github.com/ShiningRay/tessell/issues/17) | 二维滚动 / 冻结表头 | v0.2.0 补 `ScrollModel`，demo 已采用 |
 | [#18](https://github.com/ShiningRay/tessell/issues/18) | Crystal 语言/API 坑 | v0.2.0 已进 `docs/usage.md` |
 
-v0.2.0 之后又发现 9 条缺口，已全部提为 issue：
+v0.2.0 之后又发现 13 条缺口（#19–#32，含 1 条上游同期自提），已全部提为 issue：
 
 | Issue | 主题 |
 |---|---|
@@ -144,6 +144,10 @@ v0.2.0 之后又发现 9 条缺口，已全部提为 issue：
 | [#25](https://github.com/ShiningRay/tessell/issues/25) | `PaintListPainter` 的 clip 语义与 `DrawListPainter` 不一致 |
 | [#26](https://github.com/ShiningRay/tessell/issues/26) | `Event::Kind::Focus` 存在但永不投递 |
 | [#27](https://github.com/ShiningRay/tessell/issues/27) | `Kit::Key` 未跟随 `Input::KeyCode` 扩展 |
+| [#29](https://github.com/ShiningRay/tessell/issues/29) | 字体栈到不了组件层，无法声明粗体 |
+| [#30](https://github.com/ShiningRay/tessell/issues/30) | `Root`/`Context` 的 `scale` 只读，DPI 变化要重建 |
+| [#31](https://github.com/ShiningRay/tessell/issues/31) | A11y 缺二维网格语义 |
+| [#32](https://github.com/ShiningRay/tessell/issues/32) | 编辑态缺 Tab 语义（制表位/提交） |
 
 逐条实测与 demo 侧绕过方式见 [friction-log](docs/friction-log.md)。
 

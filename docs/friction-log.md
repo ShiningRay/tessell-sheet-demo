@@ -93,7 +93,7 @@ v0.2.0 把这些写进 `docs/usage.md` 的「写示例常撞的 Crystal 编译�
 
 ## 仍然存在的缺口（v0.2.0 之后新记录）
 
-全部已提为 issue（#19–#27）。每条都附了实测输出与最小复现。
+全部已提为 issue（#19–#32，其中 #28 是上游同期自提）。每条都附了实测输出与最小复现。
 
 | Issue | 缺口 |
 |---|---|
@@ -106,6 +106,11 @@ v0.2.0 把这些写进 `docs/usage.md` 的「写示例常撞的 Crystal 编译�
 | [#25](https://github.com/ShiningRay/tessell/issues/25) | `PaintListPainter` 与 `DrawListPainter` 的 clip 语义不一致（文本裁切断言误报通过） |
 | [#26](https://github.com/ShiningRay/tessell/issues/26) | `Event::Kind::Focus` 存在但永不投递：`sync_focus` 只调 `on_focus_changed` |
 | [#27](https://github.com/ShiningRay/tessell/issues/27) | `Kit::Key` 未跟随 `Input::KeyCode` 扩展：`Digit0-9`/`F1-F4`/`KeyT` 全落到 `Unknown` |
+| [#28](https://github.com/ShiningRay/tessell/issues/28) | `Backend` 缺外部纹理通道：`DrawList` 无纹理四边形命令（上游同期自提，位图类控件无地基） |
+| [#29](https://github.com/ShiningRay/tessell/issues/29) | 字体栈到不了组件层：`Painter#text` 无 `font_id`，`Kit::Text`/`Button` 无法声明粗体 |
+| [#30](https://github.com/ShiningRay/tessell/issues/30) | `Root`/`Context` 的 `scale` 只读：DPI 变化只能重建 Root，焦点与编辑状态丢失 |
+| [#31](https://github.com/ShiningRay/tessell/issues/31) | A11y 缺二维网格语义：`Role` 无 `Grid`/`GridCell`，`Meta` 无 row/col |
+| [#32](https://github.com/ShiningRay/tessell/issues/32) | 编辑态缺 Tab 语义：`TextEditing` 允许 tab 但无制表位，`Input` 不处理 Tab |
 
 ### 对上一轮的更正
 

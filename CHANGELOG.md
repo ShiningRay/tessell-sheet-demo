@@ -27,10 +27,11 @@
 - PNG 截图直接使用上游 `require "tessell/tools/lib/png"`（shard 路径可达，已实测）。
 
 ### 向上游反馈
-v0.2.0 之后又实测出 9 条缺口，全部已提 issue #19–#27：行高三套口径、
+v0.2.0 之后又实测出 13 条缺口（#19–#32，其中 #28 为上游同期自提）：行高三套口径、
 Kit 事件不转发双击/时间戳、DrawList Text 命令无文本内容、`sync_atlas_dirty`
 不在 `Backend` 抽象、Theme 往返丢 `surface`、文本缓存无界、两个 Painter 的 clip
-语义不一致、`Focus` 事件永不投递、`Kit::Key` 未跟随核心扩展。
+语义不一致、`Focus` 事件永不投递、`Kit::Key` 未跟随核心扩展、字体栈到不了组件层、
+`scale` 只读导致 DPI 变化要重建 Root、A11y 缺二维网格语义、编辑态缺 Tab 语义。
 
 ### 验证
 - `crystal spec`：60 examples / 0 failures。
