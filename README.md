@@ -30,14 +30,22 @@
 
 ```bash
 shards install
-crystal run src/tessell_sheet_demo.cr --link-flags "-L/opt/homebrew/lib"
+tools/run.sh
+```
+
+`tools/run.sh` 会在 macOS 自动加 `-L/opt/homebrew/lib`，并先创建 `bin/`。也可以手动：
+
+```bash
+mkdir -p bin
+crystal build src/tessell_sheet_demo.cr -o bin/sheet_demo --link-flags "-L/opt/homebrew/lib"
+./bin/sheet_demo
 ```
 
 Linux（Ubuntu/Debian）：
 
 ```bash
 sudo apt install libsdl2-dev libfreetype6-dev libharfbuzz-dev libgl1-mesa-dev
-crystal run src/tessell_sheet_demo.cr
+tools/run.sh
 ```
 
 Windows：安装 SDL2 开发库并确保 `SDL2.dll` 在 PATH 或 exe 目录。
@@ -77,8 +85,7 @@ crystal spec
 真实窗口截图冒烟：
 
 ```bash
-crystal build src/tessell_sheet_demo.cr -o bin/sheet_demo --link-flags "-L/opt/homebrew/lib"
-./bin/sheet_demo --frames=3 --screenshot=/tmp/sheet.ppm
+tools/run.sh --frames=3 --screenshot=/tmp/sheet.ppm
 ffmpeg -y -i /tmp/sheet.ppm /tmp/sheet.png
 ```
 
