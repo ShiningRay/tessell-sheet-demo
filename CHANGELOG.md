@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased — upstream 64eb5b1（v0.2.0 之后 25 个提交）
+## 0.4.0 (2026-11-15)
 
-上游把本仓提的 #19–#32 大部分实现了，demo 跟着迁移。没有新 tag，因此
-`shard.yml` 用 `commit: 64eb5b1` 固定（可复现优先于跟随 `main`）。
+跟进 Tessell v0.4.0（cf91d6d）。上游在 v0.2.0 之后 29 个提交里把本仓提的
+#19–#32 全部实现，demo 跟着迁移。破坏性变更集中在前 25 个提交（迁移时的
+`64eb5b1`）；其后的 v0.3.0 / v0.4.0 只新增能力（#43 重复 UiKey fail-fast、
+#44 Signal 接入 Kit + `For` keyed 行复用），对 demo 无需改动——`crystal spec`
+在 v0.4.0 下仍是 70/0，六张截图与基线逐字节一致。
 
 ### 破坏性变更适配
 - `Kit::Painter#text` 新增 `font_id`，`Kit::Painter` 新增 abstract `image`：
@@ -59,8 +62,10 @@
 ### 验证
 - `crystal spec`：70 examples / 0 failures（新增双击、拖拽收尾、a11y 网格语义、
   Tab 拒绝、scale 保持编辑态）。
-- macOS arm64 SDL2/OpenGL Retina scale=2 真实窗口：6 张截图逐张核对，与
-  v0.2.0 基线一致。
+- macOS arm64 SDL2/OpenGL Retina scale=2 真实窗口：6 张截图重新生成，逐张核对，
+  与 v0.2.0 基线一致（debug 图仅帧耗时数字不同）。
+- 全新 clone（`5542bd0` + tessell `64eb5b1`）独立复验：spec 70/0、构建成功、
+  `SHEET_DEMO_RUN frames=3 size=1180x760 scale=2.0`、PNG 2360×1520。
 
 ## 0.2.0 (2026-11-14)
 

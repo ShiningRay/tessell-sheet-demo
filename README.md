@@ -1,6 +1,6 @@
 # Tessell Sheets
 
-用 [Tessell](https://github.com/ShiningRay/tessell)（`v0.2.0` 之后 25 个提交，`64eb5b1`）和 `Tessell::Kit` 构建的电子表格 demo。
+用 [Tessell](https://github.com/ShiningRay/tessell) `v0.4.0` 和 `Tessell::Kit` 构建的电子表格 demo。
 
 ![Tessell Sheets](assets/sheet-light.png)
 
@@ -116,8 +116,7 @@ tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 - 撤销是整表快照（100 步上限），不是按操作增量。
 - CSV 打开会重置窗口内数据；不保留公式外的单元格风格。
 - 真实窗口证据来自 macOS arm64 SDL2/OpenGL + Retina 2x；Windows/Linux 未实测。
-- 依赖 Tessell `commit: 64eb5b1`（v0.2.0 之后 25 个提交，尚无新 tag）；
-  升到更高版本前请先跑 `crystal spec` 与截图脚本。
+- 依赖 Tessell `tag: v0.4.0`；升到更高版本前请先跑 `crystal spec` 与截图脚本。
 - 未接平台 IME 预编辑；输入法走 SDL_TEXTINPUT 已提交文本。
 
 ## 开发摩擦
@@ -133,7 +132,7 @@ tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 | [#18](https://github.com/ShiningRay/tessell/issues/18) | Crystal 语言/API 坑 | v0.2.0 已进 `docs/usage.md` |
 
 v0.2.0 之后又发现 13 条缺口（#19–#32，含 1 条上游同期自提）。上游在
-64eb5b1 这一批提交里 13 条全部实现，demo 已全部采用：
+v0.4.0 里 13 条全部实现，demo 已全部采用：
 
 | Issue | 主题 | 状态 |
 |---|---|---|

@@ -15,4 +15,4 @@ targets:
 dependencies:
   tessell:
     github: ShiningRay/tessell
-    commit: 64eb5b1
+    tag: v0.4.0
