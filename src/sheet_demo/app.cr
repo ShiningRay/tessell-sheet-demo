@@ -69,25 +69,15 @@ module SheetDemo
       @sheet.revision != @saved_revision
     end
 
-    # Tab must be intercepted before Root: Root always consumes Tab for focus
-    # traversal, so a grid cannot implement cell-over-cell Tab navigation.
+    # Root 现在先把 Tab 投递给 wants_tab? 的焦点组件（tessell 0.2.0,
+    # issue #16），表格导航不再需要应用层拦截。这里只保留 Escape：
+    # 组件吃掉普通 Tab 后，Ctrl/Meta+Tab 是焦点环出口，Escape 额外把
+    # 焦点送到工具栏，符合电子表格用户习惯。
     def handle_app_event(event : Tessell::Input::Event) : Bool
       return false unless event.kind == Tessell::Input::Event::Kind::KeyDown
       root = @root
       return false unless root
       return false unless @grid.focused
-
-      # Tab is always consumed by Root for focus traversal; Ctrl/Meta+Tab is
-      # left to Root so the keyboard user can leave the grid.
-      if event.key == Tessell::Input::KeyCode::Tab
-        return false if event.ctrl? || event.meta?
-        return @grid.handle(
-          Tessell::Kit::Event.key_down(Tessell::Kit::Key::Tab, event.modifiers),
-          root.context)
-      end
-
-      # Escape leaves the grid (when not editing) so focus can reach the
-      # toolbar; there is no other way out of the cell navigation loop.
       if event.key == Tessell::Input::KeyCode::Escape && !@grid.editing?
         if button = first_toolbar_button
           root.focus(button)

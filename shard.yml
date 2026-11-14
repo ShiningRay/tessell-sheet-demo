@@ -1,5 +1,5 @@
 name: tessell-sheet-demo
-version: 0.1.0
+version: 0.2.0
 description: |
   A spreadsheet demo built with Tessell and Tessell Kit.
   Formula engine, 2D grid, in-cell editing, CSV import/export and undo.
@@ -15,4 +15,4 @@ targets:
 dependencies:
   tessell:
     github: ShiningRay/tessell
-    branch: main
+    tag: v0.2.0

@@ -12,6 +12,7 @@ require "tessell/text/measurer"
 require "tessell/text/glyph_atlas"
 require "tessell/text/rasterizer"
 require "../sheet_demo"
+require "./png"
 
 module SheetDemo
   @[Link("SDL2")]
@@ -169,6 +170,7 @@ module SheetDemo
   SDLK_END       = 0x4000004D
   SDLK_PAGEUP    = 0x4000004B
   SDLK_PAGEDOWN  = 0x4000004E
+  SDLK_F1        = 0x4000003A
   SDLK_a         =         97
   SDLK_b         =         98
   SDLK_c         =         99
@@ -194,29 +196,6 @@ module SheetDemo
     end
   end
 
-  # Kit::Context measures text at device font size but returns the result into
-  # logical layout. Wrapping the measurer and dividing by scale is the
-  # workaround used by this demo; the framework has no logical-metrics adapter.
-  class LogicalTextMetrics < Tessell::Kit::TextMetrics
-    def initialize(@inner : Tessell::Kit::TextMetrics, @scale : Float32)
-    end
-
-    def measure(text : String, size : Float32) : Tessell::Size
-      result = @inner.measure(text, size)
-      Tessell::Size.new(result.width / @scale, result.height / @scale)
-    end
-
-    def measure(text : String, size : Float32, max_width : Float32) : Tessell::Size
-      scaled_max = max_width.infinite? ? max_width : max_width * @scale
-      result = @inner.measure(text, size, scaled_max)
-      Tessell::Size.new(result.width / @scale, result.height / @scale)
-    end
-
-    def line_height(size : Float32) : Float32
-      @inner.line_height(size) / @scale
-    end
-  end
-
   class GLPainter < Tessell::Kit::Painter
     getter scale : Float32
 
@@ -225,21 +204,20 @@ module SheetDemo
     @atlas : Tessell::Text::GlyphAtlas
     @width : Int32
     @height : Int32
-    @text_clips : Array(Tessell::Rect)
     @sink : Array(Tessell::Text::GlyphPlacement)
-    @synced_pages : Int32
-    @synced_used : Int32
-    @synced_evicted : Int32
+    # Per-text-call batch boundary snapshots: text stays batched, but flush
+    # splits at each text() call so shapes and text submit in exact command
+    # order (tessell 0.2.0 Painter contract, issue #15).
+    @text_marks : Array(Int32)
+    @submitted_batches : Int32
 
     def initialize(@renderer : Tessell::Render::TextRenderer,
                    @atlas : Tessell::Text::GlyphAtlas,
                    @width : Int32, @height : Int32, @scale : Float32)
       @draw = Tessell::Kit::DrawListPainter.new
-      @text_clips = [] of Tessell::Rect
       @sink = [] of Tessell::Text::GlyphPlacement
-      @synced_pages = -1
-      @synced_used = -1
-      @synced_evicted = -1
+      @text_marks = [] of Int32
+      @submitted_batches = 0
     end
 
     def resize(width : Int32, height : Int32, scale : Float32) : Nil
@@ -273,40 +251,54 @@ module SheetDemo
 
     def text(x : Float32, baseline_y : Float32, text : String,
              color : UInt32, size : Float32) : Nil
-      if clip = @text_clips.last?
-        return if baseline_y < clip.origin.y - size || baseline_y > clip.max_y + size
-        return if x > clip.max_x
-      end
       px_size = (size * @scale).round.to_i
       return if px_size <= 0
-      @renderer.append_text_cached(@sink, text, x * @scale, baseline_y * @scale,
-        px_size, @width, @height, color)
+      dx = x * @scale
+      dy = baseline_y * @scale
+      @renderer.append_text_cached(@sink, text, dx, dy, px_size, @width, @height, color)
+      # Marker in the DrawList records call order and carries the active clip;
+      # draw_draw_list skips Text commands, so it is never drawn as geometry.
+      @draw.text(dx, dy, text, color, px_size.to_f32)
+      @text_marks << @renderer.batch_count
     end
 
     def push_clip(rect : Tessell::Rect) : Nil
-      @text_clips << rect
       @draw.push_clip(scale_rect(rect))
     end
 
     def pop_clip : Nil
-      @text_clips.pop unless @text_clips.empty?
       @draw.pop_clip
     end
 
     def flush(backend : Tessell::Render::GL::GLBackend) : Nil
-      if @atlas.page_count != @synced_pages ||
-         @atlas.used_pixels != @synced_used ||
-         @atlas.evicted_total != @synced_evicted
-        backend.sync_atlas(@atlas)
-        @synced_pages = @atlas.page_count
-        @synced_used = @atlas.used_pixels
-        @synced_evicted = @atlas.evicted_total
+      # Atlas sync is revision-driven: page_count is not a change signal
+      # (tessell 0.2.0 issue #1).
+      backend.sync_atlas_dirty(@atlas)
+      @submitted_batches = 0
+      list = @draw.list
+      seg = 0
+      i = 0
+      mark = 0
+      while i < list.size
+        cmd = list[i]
+        if cmd.kind == Tessell::Render::CmdKind::Text && mark < @text_marks.size
+          backend.draw_draw_list(list, seg, i - seg) if i > seg
+          backend.draw_text(@renderer.vertices, @renderer.batch_runs,
+            @text_marks[mark], @submitted_batches, cmd.clip)
+          @submitted_batches = @text_marks[mark]
+          mark += 1
+          seg = i + 1
+        end
+        i += 1
       end
-      backend.draw_draw_list(@draw.list)
-      backend.draw_text(@renderer.vertices, @renderer.batch_runs, @renderer.batch_count)
+      backend.draw_draw_list(list, seg, list.size - seg) if list.size > seg
       @draw.reset
       @renderer.reset
-      @text_clips.clear
+      @text_marks.clear
+    end
+
+    def clip_depth : Int32
+      @draw.clip_depth
     end
 
     private def scale_rect(rect : Tessell::Rect) : Tessell::Rect
@@ -407,8 +399,9 @@ module SheetDemo
       backend.resize(drawable_w, drawable_h)
 
       clipboard = SdlClipboard.new
-      core_metrics = Tessell::Kit::CoreTextMetrics.new(measurer, 0)
-      metrics = LogicalTextMetrics.new(core_metrics, scale)
+      # Context#measure_text returns logical units since tessell 0.2.0
+      # (issue #14); no host-side divide-by-scale adapter is needed.
+      metrics = Tessell::Kit::CoreTextMetrics.new(measurer, 0)
       root = @app.build_root(metrics, clipboard, scale)
       root.layout(logical_w.to_f32, logical_h.to_f32)
       root.build
@@ -420,18 +413,28 @@ module SheetDemo
       @mouse_x = 0
       @mouse_y = 0
 
+      # Platform-neutral frame loop (tessell 0.2.0, issue #3).
+      runner = Tessell::App::Runner.new
+      runner.frames_limit = frames_limit
       frames = 0
+      last_ticks = LibSDL.SDL_GetTicks.to_i64
       quit = false
       until quit
         quit = pump_events(root)
         break if quit
 
+        # F1 debug overlay (issue #11): Root handles the toggle, the host
+        # just supplies stats once per frame.
+        now = LibSDL.SDL_GetTicks.to_i64
+        root.debug_info = Tessell::Kit::DebugInfo.collect(backend.stats, atlas, root,
+          (now - last_ticks).to_f32)
+        last_ticks = now
+
         if @resize_pending
           update_sizes(window, pointerof(logical_w), pointerof(logical_h),
             pointerof(drawable_w), pointerof(drawable_h))
           scale = device_scale(logical_w, drawable_w)
-          metrics = LogicalTextMetrics.new(
-            Tessell::Kit::CoreTextMetrics.new(measurer, 0), scale)
+          metrics = Tessell::Kit::CoreTextMetrics.new(measurer, 0)
           root = @app.build_root(metrics, clipboard, scale)
           root.layout(logical_w.to_f32, logical_h.to_f32)
           root.build
@@ -454,8 +457,12 @@ module SheetDemo
         backend.end_frame
 
         if path = screenshot_path
-          if frames_limit == 0 || frames + 1 >= frames_limit
-            capture_ppm(path, drawable_w, drawable_h)
+          if frames_limit == 0 || runner.frame_count + 1 >= frames_limit
+            if path.ends_with?(".png")
+              capture_png(path, drawable_w, drawable_h)
+            else
+              capture_ppm(path, drawable_w, drawable_h)
+            end
             screenshot_path = nil
           end
         end
@@ -463,7 +470,8 @@ module SheetDemo
         LibSDL.SDL_GL_SwapWindow(window)
 
         frames += 1
-        break if frames_limit > 0 && frames >= frames_limit
+        # Runner owns frames_limit / stop() (issue #3).
+        break if runner.advance(LibSDL.SDL_GetTicks.to_i64)
         LibSDL.SDL_Delay(8)
       end
 
@@ -497,6 +505,10 @@ module SheetDemo
         point = grid.cell_center(5, 1)
         click_point(root, point.x, point.y)
         root.handle(Tessell::Input::Event.text_input("=(C4+C5)/2"))
+      when "debug"
+        root.handle(Tessell::Input::Event.key_down(Tessell::Input::KeyCode::F1))
+        point = grid.cell_center(3, 1)
+        root.handle(Tessell::Input::Event.pointer_move(point.x, point.y))
       when "scrolled"
         6.times do
           root.handle(Tessell::Input::Event.wheel(
@@ -519,6 +531,28 @@ module SheetDemo
     private def shift_key(root : Tessell::Kit::Root, key : Tessell::Input::KeyCode) : Nil
       root.handle(Tessell::Input::Event.key_down(key,
         Tessell::Input::Modifiers.new(shift: true)))
+    end
+
+    # PNG screenshot (issue #9). Tessell v0.2.0 ships tools/lib/png.cr, but a
+    # consumer cannot require it through the shard path, so the demo carries
+    # a minimal writer in ./png.cr.
+    private def capture_png(path : String, width : Int32, height : Int32) : Nil
+      return if width <= 0 || height <= 0
+      rgba = Bytes.new(width * height * 4)
+      TessellGL.glFinish
+      TessellGL.glPixelStorei(TessellGL::GL_PACK_ALIGNMENT, 1)
+      TessellGL.glReadPixels(0, 0, width, height, TessellGL::GL_RGBA,
+        TessellGL::GL_UNSIGNED_BYTE, rgba.to_unsafe.as(Void*))
+      top_down = Bytes.new(width * height * 4)
+      row = width * 4
+      y = 0
+      while y < height
+        src = (height - 1 - y) * row
+        dst = y * row
+        (top_down.to_unsafe + dst).copy_from(rgba.to_unsafe + src, row)
+        y += 1
+      end
+      Png.write(path, width, height, top_down)
     end
 
     private def capture_ppm(path : String, width : Int32, height : Int32) : Nil
@@ -694,6 +728,7 @@ module SheetDemo
       when SDLK_v         then Tessell::Input::KeyCode::KeyV
       when SDLK_x         then Tessell::Input::KeyCode::KeyX
       when SDLK_z         then Tessell::Input::KeyCode::KeyZ
+      when SDLK_F1        then Tessell::Input::KeyCode::F1
       else
         nil
       end

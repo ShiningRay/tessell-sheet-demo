@@ -3,6 +3,16 @@ require "tessell/kit"
 require "./grid"
 
 module SheetDemo
+  # 统一的单行文本垂直居中（tessell 0.2.0, issue #6）：用 FontMetrics 的
+  # ascent/descent 计算基线，不再用 `-fs * 0.1` 之类的经验系数。
+  module TextBaseline
+    def self.centered(ctx : Tessell::Kit::Context, rect : Tessell::Rect,
+                      size : Float32) : Float32
+      m = ctx.text_metrics(size)
+      rect.origin.y + (rect.size.height - (m.ascent + m.descent)) / 2.0_f32 + m.ascent
+    end
+  end
+
   class FormulaBar < Tessell::Kit::Component
     property address : String
     property content : String
@@ -46,15 +56,15 @@ module SheetDemo
         address_rect.max_x, address_rect.max_y - 4.0_f32, palette.border, 1.0_f32)
       address_w = ctx.measure_text(@address, fs).width
       p.text(address_rect.origin.x + (address_rect.size.width - address_w) / 2.0_f32,
-        baseline(@bounds, fs), @address, palette.foreground, fs)
+        baseline(ctx, @bounds, fs), @address, palette.foreground, fs)
 
       fx_x = address_rect.max_x + 10.0_f32
-      p.text(fx_x, baseline(@bounds, fs), "fx", palette.accent, fs)
+      p.text(fx_x, baseline(ctx, @bounds, fs), "fx", palette.accent, fs)
       content_x = fx_x + 22.0_f32
       max_width = Math.max(0.0_f32, @bounds.max_x - content_x - 8.0_f32)
       p.push_clip(Tessell::Rect.new(content_x, @bounds.origin.y,
         max_width, @bounds.size.height))
-      p.text(content_x, baseline(@bounds, fs),
+      p.text(content_x, baseline(ctx, @bounds, fs),
         fit_text(ctx, @content, fs, max_width), palette.foreground, fs)
       p.pop_clip
     end
@@ -73,8 +83,9 @@ module SheetDemo
       "#{@address} #{@content}"
     end
 
-    private def baseline(rect : Tessell::Rect, fs : Float32) : Float32
-      rect.origin.y + (rect.size.height + fs) / 2.0_f32 - fs * 0.1_f32
+    private def baseline(ctx : Tessell::Kit::Context, rect : Tessell::Rect,
+                         fs : Float32) : Float32
+      TextBaseline.centered(ctx, rect, fs)
     end
 
     private def fit_text(ctx : Tessell::Kit::Context, text : String, fs : Float32,
@@ -130,7 +141,7 @@ module SheetDemo
       fs = ctx.theme.font_size(Tessell::Kit::ControlSize::Small)
       p.line(@bounds.origin.x, @bounds.origin.y,
         @bounds.max_x, @bounds.origin.y, palette.border, 1.0_f32)
-      baseline = @bounds.origin.y + (@bounds.size.height + fs) / 2.0_f32 - fs * 0.1_f32
+      baseline = TextBaseline.centered(ctx, @bounds, fs)
       p.text(@bounds.origin.x, baseline, @text, palette.muted, fs)
       right_w = ctx.measure_text(@right_text, fs).width
       p.text(@bounds.max_x - right_w, baseline, @right_text, palette.muted, fs)

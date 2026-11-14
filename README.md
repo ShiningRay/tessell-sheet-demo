@@ -1,6 +1,6 @@
 # Tessell Sheets
 
-用 [Tessell](https://github.com/ShiningRay/tessell) 和 `Tessell::Kit` 构建的电子表格 demo。
+用 [Tessell](https://github.com/ShiningRay/tessell) `v0.2.0` 和 `Tessell::Kit` 构建的电子表格 demo。
 
 ![Tessell Sheets](assets/sheet-light.png)
 
@@ -23,6 +23,10 @@
 | 深色主题 | 滚动与冻结表头 |
 |---|---|
 | ![dark](assets/sheet-dark.png) | ![scrolled](assets/sheet-scrolled.png) |
+
+F1 帧调试 overlay（`--scenario=debug`）：
+
+![debug](assets/sheet-debug.png)
 
 ## 运行
 
@@ -55,10 +59,10 @@ Windows：安装 SDL2 开发库并确保 `SDL2.dll` 在 PATH 或 exe 目录。
 | 参数 | 说明 |
 |---|---|
 | `--frames=N` | 渲染 N 帧后退出（CI/截图用） |
-| `--screenshot=path.ppm` | 最后一帧写入 PPM |
+| `--screenshot=path.png` / `.ppm` | 最后一帧写入 PNG 或 PPM |
 | `--theme=dark` / `--theme=light` | 初始主题 |
 | `--open=file.csv` | 启动时打开 CSV |
-| `--scenario=selection/editing/scrolled` | 脚本化交互（用于截图回归） |
+| `--scenario=selection/editing/scrolled/debug` | 脚本化交互（用于截图回归） |
 
 ### 快捷键
 
@@ -67,10 +71,12 @@ Windows：安装 SDL2 开发库并确保 `SDL2.dll` 在 PATH 或 exe 目录。
 | 方向键 / Enter / Shift+方向键 | 移动活动单元格 / 扩展选区 |
 | Tab / Shift+Tab | 单元格间移动 |
 | Escape | 退出编辑；空闲时把焦点交回工具栏 |
+| Ctrl/Meta+Tab | 离开网格，切到工具栏焦点环 |
 | Ctrl/Cmd+C/X/V | 复制 / 剪切 / 粘贴 TSV |
 | Ctrl/Cmd+A | 全选 |
 | Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z 或 Ctrl/Cmd+Y | 撤销 / 重做 |
 | Ctrl/Cmd+S / O / N | 保存 / 打开 / 新建 |
+| F1 | 帧调试 overlay |
 | Delete | 清空选区 |
 | Backspace | 清空当前单元格并进入编辑 |
 
@@ -80,13 +86,14 @@ Windows：安装 SDL2 开发库并确保 `SDL2.dll` 在 PATH 或 exe 目录。
 crystal spec
 ```
 
-覆盖公式词法/求值、错误值与循环引用、CSV 往返、行列操作、快照恢复、网格坐标/滚动/导航/编辑/剪贴板、应用装配与 a11y。
+覆盖公式词法/求值、错误值与循环引用、CSV 往返、行列操作、快照恢复、网格坐标/滚动/导航/编辑/剪贴板、应用装配与 a11y；
+`spec/render_spec.cr` 用 `SoftwareBackend` 在纯 CPU 像素级断言选区、暗色 surface、活动单元格边框与画布底色。
 
-真实窗口截图冒烟：
+真实窗口截图：
 
 ```bash
-tools/run.sh --frames=3 --screenshot=/tmp/sheet.ppm
-ffmpeg -y -i /tmp/sheet.ppm /tmp/sheet.png
+tools/run.sh --frames=3 --screenshot=/tmp/sheet.png
+tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 ```
 
 ## 结构
@@ -98,7 +105,8 @@ ffmpeg -y -i /tmp/sheet.ppm /tmp/sheet.png
 | `src/sheet_demo/grid.cr` | `SheetGrid`：坐标、选区、编辑、滚动、绘制 |
 | `src/sheet_demo/widgets.cr` | 公式栏、状态栏、外层布局 |
 | `src/sheet_demo/app.cr` | 工作簿状态、工具栏、撤销/重做、文件 IO |
-| `src/sheet_demo/sdl_host.cr` | SDL2/OpenGL 宿主（框架尚无公共 Runner） |
+| `src/sheet_demo/sdl_host.cr` | SDL2/OpenGL 宿主（`App::Runner` + PNG 截图 + F1 overlay） |
+| `src/sheet_demo/png.cr` | PNG 写出（`tools/` 不在 shard require 路径内） |
 
 `src/sheet_demo.cr` 是纯逻辑入口，不依赖 SDL；spec 只 require 它。
 
@@ -109,17 +117,23 @@ ffmpeg -y -i /tmp/sheet.ppm /tmp/sheet.png
 - 撤销是整表快照（100 步上限），不是按操作增量。
 - CSV 打开会重置窗口内数据；不保留公式外的单元格风格。
 - 真实窗口证据来自 macOS arm64 SDL2/OpenGL + Retina 2x；Windows/Linux 未实测。
+- 依赖 Tessell `tag: v0.2.0`；升到更高版本前请先跑 `crystal spec` 与截图脚本。
 - 未接平台 IME 预编辑；输入法走 SDL_TEXTINPUT 已提交文本。
 
 ## 开发摩擦
 
 开发中撞到的框架缺口与建议已整理到 [docs/friction-log.md](docs/friction-log.md)，并提交为 Tessell issue：
 
-- [#14](https://github.com/ShiningRay/tessell/issues/14) DPI 文本度量单位
-- [#15](https://github.com/ShiningRay/tessell/issues/15) Painter z-order 与文本 clip
-- [#16](https://github.com/ShiningRay/tessell/issues/16) Root 消费 Tab
-- [#17](https://github.com/ShiningRay/tessell/issues/17) 二维滚动 / 冻结表头
-- [#18](https://github.com/ShiningRay/tessell/issues/18) Crystal 语言/API 坑
+| Issue | 主题 | 状态 |
+|---|---|---|
+| [#14](https://github.com/ShiningRay/tessell/issues/14) | DPI 文本度量单位 | v0.2.0 已修，demo 已采用 |
+| [#15](https://github.com/ShiningRay/tessell/issues/15) | Painter z-order 与文本 clip | v0.2.0 已修，demo 已采用 |
+| [#16](https://github.com/ShiningRay/tessell/issues/16) | Root 消费 Tab | v0.2.0 已修，demo 已采用 |
+| [#17](https://github.com/ShiningRay/tessell/issues/17) | 二维滚动 / 冻结表头 | v0.2.0 补 `ScrollModel`，demo 已采用 |
+| [#18](https://github.com/ShiningRay/tessell/issues/18) | Crystal 语言/API 坑 | v0.2.0 已进 `docs/usage.md` |
+
+v0.2.0 之后仍存在的缺口（`tools/` 不可 require、`Kit::Key` 未跟随扩展等）也记录在
+friction-log 末尾。
 
 ## License
 

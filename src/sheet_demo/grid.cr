@@ -30,8 +30,11 @@ module SheetDemo
     getter sel_row1 : Int32
     getter sel_col0 : Int32
     getter sel_col1 : Int32
-    getter scroll_x : Float32
-    getter scroll_y : Float32
+    # 滚动数学委托给 Kit::ScrollModel（tessell 0.2.0, issue #17）。
+    # 行等高，行区间与坐标↔索引直接用 model_y；列宽不等，x 轴只取
+    # offset/clamp，可见列单独扫描。
+    getter model_x : Tessell::Kit::ScrollModel
+    getter model_y : Tessell::Kit::ScrollModel
     getter row_height : Float32
     getter header_width : Float32
     getter header_height : Float32
@@ -68,8 +71,8 @@ module SheetDemo
       @sel_row1 = 0
       @sel_col0 = 0
       @sel_col1 = 0
-      @scroll_x = 0.0_f32
-      @scroll_y = 0.0_f32
+      @model_x = Tessell::Kit::ScrollModel.new
+      @model_y = Tessell::Kit::ScrollModel.new
       @row_height = 28.0_f32
       @header_width = 56.0_f32
       @header_height = 32.0_f32
@@ -98,9 +101,31 @@ module SheetDemo
       @col_widths = Array.new(@sheet.col_count) { |index| index == 0 ? 150.0_f32 : 100.0_f32 }
       @editing = nil
       reset_selection
-      @scroll_x = 0.0_f32
-      @scroll_y = 0.0_f32
+      @model_x.offset = 0.0_f32
+      @model_y.offset = 0.0_f32
       notify_selection
+    end
+
+    def scroll_x : Float32
+      @model_x.offset
+    end
+
+    def scroll_x=(value : Float32) : Nil
+      @model_x.offset = value
+    end
+
+    def scroll_y : Float32
+      @model_y.offset
+    end
+
+    def scroll_y=(value : Float32) : Nil
+      @model_y.offset = value
+    end
+
+    # 表格内部导航（tessell 0.2.0, issue #16）：Root 先把 Tab/Shift+Tab
+    # 投递给焦点组件；Ctrl/Meta+Tab 仍恒定走焦点环。
+    def wants_tab? : Bool
+      @visible && @enabled
     end
 
     def measure(ctx : Tessell::Kit::Context, constraints : Tessell::Constraints) : Tessell::Size
@@ -111,8 +136,8 @@ module SheetDemo
 
     def arrange(ctx : Tessell::Kit::Context, bounds : Tessell::Rect) : Nil
       @bounds = bounds
+      sync_scroll_models
       ensure_visible
-      clamp_scroll
     end
 
     def emit(b : Tessell::UI::Builder, ctx : Tessell::Kit::Context) : Nil
@@ -196,7 +221,7 @@ module SheetDemo
       @anchor_row = @anchor_row.clamp(0, @sheet.row_count - 1)
       @anchor_col = @anchor_col.clamp(0, @sheet.col_count - 1)
       update_selection
-      clamp_scroll
+      sync_scroll_models
       ensure_visible
       notify_selection
     end
@@ -297,8 +322,8 @@ module SheetDemo
       token = token &* 16777619_u32 &+ @sel_row1.to_u32
       token = token &* 16777619_u32 &+ @sel_col0.to_u32
       token = token &* 16777619_u32 &+ @sel_col1.to_u32
-      token = token &* 16777619_u32 &+ @scroll_x.to_i32.to_u32
-      token = token &* 16777619_u32 &+ @scroll_y.to_i32.to_u32
+      token = token &* 16777619_u32 &+ @model_x.offset.to_i32.to_u32
+      token = token &* 16777619_u32 &+ @model_y.offset.to_i32.to_u32
       if editing = @editing
         token = token &* 16777619_u32 &+ editing.cursor.to_u32
         token = token &* 16777619_u32 &+ (editing.text.hash & 0xffffffff_u64).to_u32
@@ -396,9 +421,9 @@ module SheetDemo
     private def wheel(event : Tessell::Kit::Event) : Bool
       if event.shift? || event.wheel_dx.abs > event.wheel_dy.abs
         delta = event.wheel_dx != 0.0_f32 ? event.wheel_dx : event.wheel_dy
-        @scroll_x = (@scroll_x + delta).clamp(0.0_f32, max_scroll_x)
+        @model_x.scroll_by(delta)
       else
-        @scroll_y = (@scroll_y - event.wheel_dy).clamp(0.0_f32, max_scroll_y)
+        @model_y.scroll_by(-event.wheel_dy)
       end
       true
     end
@@ -745,29 +770,41 @@ module SheetDemo
       lines.map { |line| line.split('\t') }
     end
 
-    private def clamp_scroll : Nil
-      @scroll_x = @scroll_x.clamp(0.0_f32, max_scroll_x)
-      @scroll_y = @scroll_y.clamp(0.0_f32, max_scroll_y)
+    # 内容尺寸/viewport 变化后同步到 ScrollModel；写入 offset 即 clamp。
+    private def sync_scroll_models : Nil
+      body = body_rect
+      @model_x.content_size = total_width
+      @model_x.viewport_size = body.size.width
+      @model_y.content_size = @sheet.row_count * @row_height
+      @model_y.viewport_size = body.size.height
+      @model_x.offset = @model_x.offset
+      @model_y.offset = @model_y.offset
     end
 
     private def ensure_visible : Nil
       body = body_rect
       return if body.size.width <= 0.0_f32 || body.size.height <= 0.0_f32
+      sync_scroll_models
       x0 = col_x(@active_col)
       x1 = x0 + col_width(@active_col)
-      if x0 < @scroll_x
-        @scroll_x = x0
-      elsif x1 > @scroll_x + body.size.width
-        @scroll_x = x1 - body.size.width
+      view_x = @model_x.offset
+      view_w = body.size.width
+      if x0 < view_x
+        @model_x.offset = x0
+      elsif x1 > view_x + view_w
+        @model_x.offset = x1 - view_w
       end
-      y0 = @active_row * @row_height
-      y1 = y0 + @row_height
-      if y0 < @scroll_y
-        @scroll_y = y0
-      elsif y1 > @scroll_y + body.size.height
-        @scroll_y = y1 - body.size.height
+      # 行等高：ScrollModel 的 index_at/offset_at 直接可用，
+      # 可见性仍按“整行进入视口”的表格语义处理。
+      row_top = @model_y.offset_at(@active_row, @row_height)
+      row_bottom = row_top + @row_height
+      view_y = @model_y.offset
+      view_h = body.size.height
+      if row_top < view_y
+        @model_y.offset = row_top
+      elsif row_bottom > view_y + view_h
+        @model_y.offset = row_bottom - view_h
       end
-      clamp_scroll
     end
 
     private def body_rect : Tessell::Rect
@@ -780,21 +817,19 @@ module SheetDemo
     end
 
     private def max_scroll_x : Float32
-      value = total_width - body_rect.size.width
-      value > 0.0_f32 ? value : 0.0_f32
+      @model_x.max_offset
     end
 
     private def max_scroll_y : Float32
-      value = @sheet.row_count * @row_height - body_rect.size.height
-      value > 0.0_f32 ? value : 0.0_f32
+      @model_y.max_offset
     end
 
     private def can_hscroll? : Bool
-      max_scroll_x > 0.0_f32
+      @model_x.scrollable?
     end
 
     private def can_vscroll? : Bool
-      max_scroll_y > 0.0_f32
+      @model_y.scrollable?
     end
 
     private def total_width : Float32
@@ -818,7 +853,7 @@ module SheetDemo
     end
 
     private def col_at_x(x : Float32) : Int32?
-      local = x - body_rect.origin.x + @scroll_x
+      local = x - body_rect.origin.x + @model_x.offset
       return nil if local < 0.0_f32 || local > total_width
       total = 0.0_f32
       @col_widths.each_with_index do |width, index|
@@ -831,17 +866,15 @@ module SheetDemo
     end
 
     private def row_at_y(y : Float32) : Int32?
-      local = y - body_rect.origin.y + @scroll_y
-      return nil if local < 0.0_f32
-      row = (local / @row_height).floor.to_i
-      row < @sheet.row_count ? row : nil
+      row = @model_y.index_at(y - body_rect.origin.y, @row_height)
+      row >= 0 && row < @sheet.row_count ? row : nil
     end
 
     def cell_rect(row : Int32, col : Int32) : Tessell::Rect
       body = body_rect
       Tessell::Rect.new(
-        body.origin.x + col_x(col) - @scroll_x,
-        body.origin.y + row * @row_height - @scroll_y,
+        body.origin.x + col_x(col) - @model_x.offset,
+        body.origin.y + @model_y.offset_at(row, @row_height) - @model_y.offset,
         col_width(col),
         @row_height
       )
@@ -849,14 +882,16 @@ module SheetDemo
 
     private def visible_ranges : {Int32, Int32, Int32, Int32}
       body = body_rect
-      first_row = (@scroll_y / @row_height).floor.to_i.clamp(0, @sheet.row_count - 1)
-      last_row = ((@scroll_y + body.size.height) / @row_height).ceil.to_i.clamp(0, @sheet.row_count - 1)
+      first_row, last_row = @model_y.visible_range(@row_height, @sheet.row_count)
+      first_row = first_row.clamp(0, @sheet.row_count - 1)
+      last_row = last_row.clamp(0, @sheet.row_count - 1)
+      view_right = @model_x.offset + body.size.width
       first_col = 0
-      while first_col < @sheet.col_count - 1 && col_x(first_col) + col_width(first_col) <= @scroll_x
+      while first_col < @sheet.col_count - 1 && col_x(first_col) + col_width(first_col) <= @model_x.offset
         first_col += 1
       end
       last_col = first_col
-      while last_col < @sheet.col_count - 1 && col_x(last_col + 1) < @scroll_x + body.size.width
+      while last_col < @sheet.col_count - 1 && col_x(last_col + 1) < view_right
         last_col += 1
       end
       {first_row, last_row, first_col, last_col}
@@ -889,42 +924,35 @@ module SheetDemo
     private def vthumb_rect : Tessell::Rect
       body = body_rect
       track = scrollbar_rect_v
-      content = @sheet.row_count * @row_height
-      ratio = content > 0.0_f32 ? body.size.height / content : 1.0_f32
-      thumb_h = Math.max(24.0_f32, body.size.height * ratio)
-      travel = body.size.height - thumb_h
-      y = body.origin.y + (max_scroll_y > 0.0_f32 ? travel * (@scroll_y / max_scroll_y) : 0.0_f32)
-      Tessell::Rect.new(track.origin.x + 2.0_f32, y, @scrollbar_width - 4.0_f32, thumb_h)
+      thumb = @model_y.thumb(body.size.height)
+      Tessell::Rect.new(track.origin.x + 2.0_f32, body.origin.y + thumb.pos,
+        @scrollbar_width - 4.0_f32, thumb.size)
     end
 
     private def hthumb_rect : Tessell::Rect
       body = body_rect
       track = scrollbar_rect_h
-      ratio = total_width > 0.0_f32 ? body.size.width / total_width : 1.0_f32
-      thumb_w = Math.max(24.0_f32, body.size.width * ratio)
-      travel = body.size.width - thumb_w
-      x = body.origin.x + (max_scroll_x > 0.0_f32 ? travel * (@scroll_x / max_scroll_x) : 0.0_f32)
-      Tessell::Rect.new(x, track.origin.y + 2.0_f32, thumb_w, @scrollbar_width - 4.0_f32)
+      thumb = @model_x.thumb(body.size.width)
+      Tessell::Rect.new(body.origin.x + thumb.pos, track.origin.y + 2.0_f32,
+        thumb.size, @scrollbar_width - 4.0_f32)
     end
 
     private def scroll_to_pointer_y(y : Float32) : Nil
       body = body_rect
-      thumb_h = vthumb_rect.size.height
-      travel = body.size.height - thumb_h
+      thumb = @model_y.thumb(body.size.height)
+      travel = body.size.height - thumb.size
       return if travel <= 0.0_f32
       local = y - body.origin.y - @drag_thumb_offset
-      ratio = (local / travel).clamp(0.0_f32, 1.0_f32)
-      @scroll_y = ratio * max_scroll_y
+      @model_y.offset = (local / travel).clamp(0.0_f32, 1.0_f32) * @model_y.max_offset
     end
 
     private def scroll_to_pointer_x(x : Float32) : Nil
       body = body_rect
-      thumb_w = hthumb_rect.size.width
-      travel = body.size.width - thumb_w
+      thumb = @model_x.thumb(body.size.width)
+      travel = body.size.width - thumb.size
       return if travel <= 0.0_f32
       local = x - body.origin.x - @drag_thumb_offset
-      ratio = (local / travel).clamp(0.0_f32, 1.0_f32)
-      @scroll_x = ratio * max_scroll_x
+      @model_x.offset = (local / travel).clamp(0.0_f32, 1.0_f32) * @model_x.max_offset
     end
 
     private def paint_selection(p : Tessell::Kit::Painter, ctx : Tessell::Kit::Context,
@@ -949,14 +977,15 @@ module SheetDemo
                                  first_row : Int32, last_row : Int32,
                                  first_col : Int32, last_col : Int32,
                                  body : Tessell::Rect) : Nil
-      color = ctx.theme.palette.border
+      # semantic grid token (tessell 0.2.0, issue #8) instead of generic border
+      color = ctx.render_theme.grid
       body_top = body.origin.y
       body_bottom = body.max_y
       body_left = body.origin.x
       body_right = body.max_x
       col = first_col
       while col <= last_col + 1 && col <= @sheet.col_count
-        x = body_left + col_x(col) - @scroll_x
+        x = body_left + col_x(col) - @model_x.offset
         if x >= body_left && x <= body_right
           p.line(x, body_top, x, body_bottom, color, 1.0_f32)
         end
@@ -964,7 +993,7 @@ module SheetDemo
       end
       row = first_row
       while row <= last_row + 1 && row <= @sheet.row_count
-        y = body_top + row * @row_height - @scroll_y
+        y = body_top + row * @row_height - @model_y.offset
         if y >= body_top && y <= body_bottom
           p.line(body_left, y, body_right, y, color, 1.0_f32)
         end
@@ -980,25 +1009,17 @@ module SheetDemo
       while row <= last_row
         col = first_col
         while col <= last_col
-          # The Painter contract does not preserve text/shape interleaving:
-          # GL flush draws every shape first and every text quad afterwards.
-          # Any fill drawn over an already-emitted text will be covered by that
-          # text, so the cell being edited must not emit its value here.
-          skip = @editing && row == @active_row && col == @active_col
+          # Painter 契约保证调用顺序即绘制顺序、clip 同时裁切文本
+          # （tessell 0.2.0, issue #15）。半可见单元格直接发命令，由后端
+          # scissor 裁切；编辑器的填充会在之后按命令序覆盖原值文本。
           cell = cell_rect(row, col)
-          # Text batches are drawn after every shape and carry no per-glyph
-          # clip in the GL backend, so partially visible edge cells would spill
-          # over the row/column headers. Only fully visible cells emit text.
-          visible = Tessell::Kit::Geometry.intersect(cell, body_rect)
-          fully_visible = visible.size.width == cell.size.width &&
-                          visible.size.height == cell.size.height
           value = @sheet.value(row, col)
-          unless skip || value.empty? || !fully_visible
+          unless value.empty?
             content = fit_text(ctx, value.display, fs, cell.size.width - 12.0_f32)
             color = value.error? ? ctx.theme.palette.danger : ctx.theme.palette.foreground
             align_right = value.number? || value.bool?
             x = align_right ? cell.max_x - 6.0_f32 - ctx.measure_text(content, fs).width : cell.origin.x + 6.0_f32
-            baseline = cell.origin.y + (cell.size.height + fs) / 2.0_f32 - fs * 0.1_f32
+            baseline = TextBaseline.centered(ctx, cell, fs)
             p.text(x, baseline, content, color, fs)
           end
           col += 1
@@ -1010,10 +1031,10 @@ module SheetDemo
     private def paint_selection_border(p : Tessell::Kit::Painter, ctx : Tessell::Kit::Context) : Nil
       body = body_rect
       return unless @sel_col0 <= @sel_col1 && @sel_row0 <= @sel_row1
-      x0 = body.origin.x + col_x(@sel_col0) - @scroll_x
-      x1 = body.origin.x + col_x(@sel_col1) + col_width(@sel_col1) - @scroll_x
-      y0 = body.origin.y + @sel_row0 * @row_height - @scroll_y
-      y1 = body.origin.y + (@sel_row1 + 1) * @row_height - @scroll_y
+      x0 = body.origin.x + col_x(@sel_col0) - @model_x.offset
+      x1 = body.origin.x + col_x(@sel_col1) + col_width(@sel_col1) - @model_x.offset
+      y0 = body.origin.y + @sel_row0 * @row_height - @model_y.offset
+      y1 = body.origin.y + (@sel_row1 + 1) * @row_height - @model_y.offset
       p.stroke_rect(Tessell::Rect.new(x0, y0, x1 - x0, y1 - y0),
         ctx.theme.palette.accent, 1.5_f32)
       active = cell_rect(@active_row, @active_col)
@@ -1032,7 +1053,7 @@ module SheetDemo
       p.push_clip(cell)
       pad = 5.0_f32
       text_x = cell.origin.x + pad
-      baseline = cell.origin.y + (cell.size.height + fs) / 2.0_f32 - fs * 0.1_f32
+      baseline = TextBaseline.centered(ctx, cell, fs)
       if editing.selection?
         start_x = text_x + ctx.measure_text(editing.text.byte_slice(0, editing.selection_start), fs).width
         end_x = text_x + ctx.measure_text(editing.text.byte_slice(0, editing.selection_end), fs).width
@@ -1064,26 +1085,21 @@ module SheetDemo
         body.size.width, @header_height)
       p.fill_rect(column_header, palette.surface_raised)
       p.push_clip(column_header)
-      text_limit_x = body.max_x - (can_vscroll? ? @scrollbar_width : 0.0_f32)
       col = first_col
       while col <= last_col
-        x = body.origin.x + col_x(col) - @scroll_x
+        x = body.origin.x + col_x(col) - @model_x.offset
         width = col_width(col)
         if col >= @sel_col0 && col <= @sel_col1
           p.fill_rect(Tessell::Rect.new(x, @bounds.origin.y, width, @header_height),
             palette.selection)
         end
-        # Text batches ignore Painter clip in the GL backend, so a partly
-        # visible label would spill over the scrollbar corner. Emit labels
-        # only when the whole column header is inside the text area.
-        if x >= body.origin.x && x + width <= text_limit_x
-          label = Formula.col_label(col)
-          text_w = ctx.measure_text(label, header_fs).width
-          color = col == @active_col ? palette.accent : palette.muted
-          p.text(x + (width - text_w) / 2.0_f32,
-            @bounds.origin.y + (@header_height + header_fs) / 2.0_f32 - header_fs * 0.1_f32,
-            label, color, header_fs)
-        end
+        label = Formula.col_label(col)
+        text_w = ctx.measure_text(label, header_fs).width
+        color = col == @active_col ? palette.accent : palette.muted
+        p.text(x + (width - text_w) / 2.0_f32,
+          TextBaseline.centered(ctx,
+            Tessell::Rect.new(x, @bounds.origin.y, width, @header_height), header_fs),
+          label, color, header_fs)
         p.line(x + width, @bounds.origin.y, x + width, @bounds.origin.y + @header_height,
           palette.border, 1.0_f32)
         col += 1
@@ -1094,22 +1110,20 @@ module SheetDemo
         @header_width, body.size.height)
       p.fill_rect(row_header, palette.surface_raised)
       p.push_clip(row_header)
-      text_limit_y = body.max_y - (can_hscroll? ? @scrollbar_width : 0.0_f32)
       row = first_row
       while row <= last_row
-        y = body.origin.y + row * @row_height - @scroll_y
+        y = body.origin.y + row * @row_height - @model_y.offset
         if row >= @sel_row0 && row <= @sel_row1
           p.fill_rect(Tessell::Rect.new(@bounds.origin.x, y, @header_width, @row_height),
             palette.selection)
         end
-        if y >= body.origin.y && y + @row_height <= text_limit_y
-          label = (row + 1).to_s
-          text_w = ctx.measure_text(label, header_fs).width
-          color = row == @active_row ? palette.accent : palette.muted
-          p.text(@bounds.origin.x + @header_width - 8.0_f32 - text_w,
-            y + (@row_height + header_fs) / 2.0_f32 - header_fs * 0.1_f32,
-            label, color, header_fs)
-        end
+        label = (row + 1).to_s
+        text_w = ctx.measure_text(label, header_fs).width
+        color = row == @active_row ? palette.accent : palette.muted
+        p.text(@bounds.origin.x + @header_width - 8.0_f32 - text_w,
+          TextBaseline.centered(ctx,
+            Tessell::Rect.new(@bounds.origin.x, y, @header_width, @row_height), header_fs),
+          label, color, header_fs)
         p.line(@bounds.origin.x, y + @row_height, @bounds.origin.x + @header_width,
           y + @row_height, palette.border, 1.0_f32)
         row += 1

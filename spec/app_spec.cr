@@ -137,15 +137,32 @@ describe "SheetDemo::SheetApp" do
     sheet_app.handle_app_event(ctrl_tab).should be_false
   end
 
-  it "intercepts Tab so the grid can move across cells" do
+  it "lets Root deliver Tab to the grid through wants_tab?" do
     sheet_app = app
     root = sheet_app.build_root(Tessell::Kit::StubTextMetrics.new,
       Tessell::Kit::MemoryClipboard.new)
     root.layout(1180.0_f32, 760.0_f32)
     root.build
     root.focus(sheet_app.grid)
+    sheet_app.grid.wants_tab?.should be_true
     tab = Tessell::Input::Event.key_down(Tessell::Input::KeyCode::Tab)
-    sheet_app.handle_app_event(tab).should be_true
+    sheet_app.handle_app_event(tab).should be_false
+    root.handle(tab).should be_true
     sheet_app.grid.address.should eq("B1")
+    root.focused_component.should eq(sheet_app.grid)
+  end
+
+  it "keeps Ctrl+Tab as the focus-ring exit from the grid" do
+    sheet_app = app
+    root = sheet_app.build_root(Tessell::Kit::StubTextMetrics.new,
+      Tessell::Kit::MemoryClipboard.new)
+    root.layout(1180.0_f32, 760.0_f32)
+    root.build
+    root.focus(sheet_app.grid)
+    ctrl_tab = Tessell::Input::Event.key_down(Tessell::Input::KeyCode::Tab,
+      Tessell::Input::Modifiers.new(ctrl: true))
+    root.handle(ctrl_tab).should be_true
+    sheet_app.grid.address.should eq("A1")
+    root.focused_component.should_not eq(sheet_app.grid)
   end
 end
