@@ -12,7 +12,7 @@ require "tessell/text/measurer"
 require "tessell/text/glyph_atlas"
 require "tessell/text/rasterizer"
 require "../sheet_demo"
-require "./png"
+require "tessell/tools/lib/png"
 
 module SheetDemo
   @[Link("SDL2")]
@@ -533,9 +533,8 @@ module SheetDemo
         Tessell::Input::Modifiers.new(shift: true)))
     end
 
-    # PNG screenshot (issue #9). Tessell v0.2.0 ships tools/lib/png.cr, but a
-    # consumer cannot require it through the shard path, so the demo carries
-    # a minimal writer in ./png.cr.
+    # PNG screenshot (issue #9): uses the upstream writer shipped at
+    # tessell/tools/lib/png.cr (reachable through the shard require path).
     private def capture_png(path : String, width : Int32, height : Int32) : Nil
       return if width <= 0 || height <= 0
       rgba = Bytes.new(width * height * 4)
@@ -552,7 +551,7 @@ module SheetDemo
         (top_down.to_unsafe + dst).copy_from(rgba.to_unsafe + src, row)
         y += 1
       end
-      Png.write(path, width, height, top_down)
+      TessellPNG.write(path, width, height, top_down)
     end
 
     private def capture_ppm(path : String, width : Int32, height : Int32) : Nil

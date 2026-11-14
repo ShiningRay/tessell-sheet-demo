@@ -93,13 +93,36 @@ v0.2.0 把这些写进 `docs/usage.md` 的「写示例常撞的 Crystal 编译�
 
 ## 仍然存在的缺口（v0.2.0 之后新记录）
 
-- **`tools/` 不进 shard 路径**：`TessellPNG` 与 `TessellGolden` 只对仓库内的
-  `examples/` 可用，外部消费者无法 `require "tessell/tools/lib/png"`。
-  建议发布为 `src/tessell/tools/png.cr` 或独立 shard。
-- **`Kit::Key` 未跟随 `Input::KeyCode` 扩展**：核心补了 `KeyT` / `Digit0-9` / `F1-F4`，
-  但 `Kit::Key` 仍是旧的 19 个值，`Root#map_key` 也不会映射新键。
-  表格的数字快速输入、F1 debug 之外的快捷键仍需宿主直接读原始 keysym。
-- **`Root` 不转发按键时间戳/重复标志**：`Input::Event` 有了 `timestamp_ms` / `repeat`，
-  `Root#to_kit` 没有传给 Kit 事件，Router 的双击判定能用，但组件拿不到。
-- **多字体仍需应用自己拼装**：`FontStack` 给出 `pick`，但 atlas/renderer 每脸一份，
-  宿主需自行循环创建；`Kit::Context` 只接受单个 `TextMetrics`。
+全部已提为 issue（#19–#27）。每条都附了实测输出与最小复现。
+
+| Issue | 缺口 |
+|---|---|
+| [#19](https://github.com/ShiningRay/tessell/issues/19) | 三套行高口径并存：`ctx.line_height`（1.25×）与 `font_metrics`/`measure`（FT metrics）不一致；`Text`/`Button`/`Input` 仍用 `fs*0.1` / `top+fs` 猜基线 |
+| [#20](https://github.com/ShiningRay/tessell/issues/20) | `Kit::Event` 丢失输入语义：Router 有双击判定与 `timestamp_ms`/`repeat`，`Root#to_kit` 不透传 |
+| [#21](https://github.com/ShiningRay/tessell/issues/21) | `DrawList` 的 Text 命令丢弃文本内容：宿主实现 #15 交错提交必须自建平行 batch 数组 |
+| [#22](https://github.com/ShiningRay/tessell/issues/22) | `sync_atlas_dirty` 只在 `GLBackend` 上：`Backend` 抽象缺增量 atlas 同步 |
+| [#23](https://github.com/ShiningRay/tessell/issues/23) | `Kit::Theme` ↔ `Render::Theme` 往返丢信息：`surface` 被 `bg` 覆盖 |
+| [#24](https://github.com/ShiningRay/tessell/issues/24) | `Context` 文本测量缓存无上限无观测，`clear_text_cache` 无调用契约 |
+| [#25](https://github.com/ShiningRay/tessell/issues/25) | `PaintListPainter` 与 `DrawListPainter` 的 clip 语义不一致（文本裁切断言误报通过） |
+| [#26](https://github.com/ShiningRay/tessell/issues/26) | `Event::Kind::Focus` 存在但永不投递：`sync_focus` 只调 `on_focus_changed` |
+| [#27](https://github.com/ShiningRay/tessell/issues/27) | `Kit::Key` 未跟随 `Input::KeyCode` 扩展：`Digit0-9`/`F1-F4`/`KeyT` 全落到 `Unknown` |
+
+### 对上一轮的更正
+
+上一版 friction-log 写的「`tools/lib/png.cr` 不在 shard require 路径」是**误判**。
+`require "tessell/tools/lib/png"` 在 shard 消费者里可以正常工作（shard 会把整个仓库
+放进 `lib/tessell/`，Crystal 的 require 解析能到 `tools/`）。demo 已删掉自带的
+`src/sheet_demo/png.cr`，改回上游 `TessellPNG.write`，`--screenshot=x.png` 行为不变。
+
+demo 侧对这些缺口的处理：
+
+- **#19**：`TextBaseline.centered` 用 `ctx.text_metrics` 计算基线（组件内已修正），
+  但 `Kit::Text`/`Button`/`Input` 仍是框架内置的近似公式。
+- **#20**：`SheetGrid` 自己维护 `@last_click_ms` 判断双击。
+- **#21**：宿主维护 `@text_marks` 与 `@draw.list` 两份平行数组。
+- **#22**：`GLPainter#flush` 绑定 `GL::GLBackend` 具体类型。
+- **#23**：网格线读 `ctx.render_theme.grid`，其余色读 `ctx.theme.palette`，两者并存。
+- **#24**：不在 demo 内清理（单表 200×26，文本集合有界）。
+- **#25**：`spec/render_spec.cr` 改用 `DrawListPainter + SoftwareBackend`，不用 `PaintListPainter` 断言 clip。
+- **#26**：依赖 `on_focus_changed`，不使用 `handle(Focus)`。
+- **#27**：Cmd+S/O/N/Y 仍在 SDL 层读原始 keysym 后回调。

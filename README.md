@@ -105,8 +105,7 @@ tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 | `src/sheet_demo/grid.cr` | `SheetGrid`：坐标、选区、编辑、滚动、绘制 |
 | `src/sheet_demo/widgets.cr` | 公式栏、状态栏、外层布局 |
 | `src/sheet_demo/app.cr` | 工作簿状态、工具栏、撤销/重做、文件 IO |
-| `src/sheet_demo/sdl_host.cr` | SDL2/OpenGL 宿主（`App::Runner` + PNG 截图 + F1 overlay） |
-| `src/sheet_demo/png.cr` | PNG 写出（`tools/` 不在 shard require 路径内） |
+| `src/sheet_demo/sdl_host.cr` | SDL2/OpenGL 宿主（`App::Runner` + 上游 `TessellPNG` 截图 + F1 overlay） |
 
 `src/sheet_demo.cr` 是纯逻辑入口，不依赖 SDL；spec 只 require 它。
 
@@ -132,8 +131,21 @@ tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 | [#17](https://github.com/ShiningRay/tessell/issues/17) | 二维滚动 / 冻结表头 | v0.2.0 补 `ScrollModel`，demo 已采用 |
 | [#18](https://github.com/ShiningRay/tessell/issues/18) | Crystal 语言/API 坑 | v0.2.0 已进 `docs/usage.md` |
 
-v0.2.0 之后仍存在的缺口（`tools/` 不可 require、`Kit::Key` 未跟随扩展等）也记录在
-friction-log 末尾。
+v0.2.0 之后又发现 9 条缺口，已全部提为 issue：
+
+| Issue | 主题 |
+|---|---|
+| [#19](https://github.com/ShiningRay/tessell/issues/19) | 三套行高口径不一致，组件仍用经验系数猜基线 |
+| [#20](https://github.com/ShiningRay/tessell/issues/20) | `Kit::Event` 不转发双击/时间戳/repeat |
+| [#21](https://github.com/ShiningRay/tessell/issues/21) | `DrawList` 的 Text 命令丢弃文本内容 |
+| [#22](https://github.com/ShiningRay/tessell/issues/22) | `sync_atlas_dirty` 只在 `GLBackend` 上 |
+| [#23](https://github.com/ShiningRay/tessell/issues/23) | `Kit::Theme` ↔ `Render::Theme` 往返丢 `surface` |
+| [#24](https://github.com/ShiningRay/tessell/issues/24) | 文本测量缓存无上限、无观测、无失效契约 |
+| [#25](https://github.com/ShiningRay/tessell/issues/25) | `PaintListPainter` 的 clip 语义与 `DrawListPainter` 不一致 |
+| [#26](https://github.com/ShiningRay/tessell/issues/26) | `Event::Kind::Focus` 存在但永不投递 |
+| [#27](https://github.com/ShiningRay/tessell/issues/27) | `Kit::Key` 未跟随 `Input::KeyCode` 扩展 |
+
+逐条实测与 demo 侧绕过方式见 [friction-log](docs/friction-log.md)。
 
 ## License
 

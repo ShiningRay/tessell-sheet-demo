@@ -13,10 +13,13 @@ fi
 mkdir -p bin
 crystal build src/tessell_sheet_demo.cr -o bin/sheet_demo "${LINK[@]}"
 
+# SDL cannot open two windows at once on macOS; runs are serialised and the
+# leftover bin/*.png is reused as the downscale source.
 render() {
   local name="$1"; shift
   ./bin/sheet_demo --frames=3 --screenshot="bin/$name.png" "$@" >/dev/null
   sips -Z 1180 "bin/$name.png" --out "assets/$name.png" >/dev/null
+  rm -f "bin/$name.png"
 }
 
 render sheet-light
