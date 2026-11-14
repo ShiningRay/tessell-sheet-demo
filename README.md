@@ -1,6 +1,6 @@
 # Tessell Sheets
 
-用 [Tessell](https://github.com/ShiningRay/tessell) `v0.2.0` 和 `Tessell::Kit` 构建的电子表格 demo。
+用 [Tessell](https://github.com/ShiningRay/tessell)（`v0.2.0` 之后 25 个提交，`64eb5b1`）和 `Tessell::Kit` 构建的电子表格 demo。
 
 ![Tessell Sheets](assets/sheet-light.png)
 
