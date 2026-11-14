@@ -55,9 +55,8 @@ module SheetDemo
     @col_widths : Array(Float32)
     @drag_mode : DragMode
     @drag_thumb_offset : Float32
-    @last_click_ms : Int64
-    @last_click_row : Int32
-    @last_click_col : Int32
+    @press_row : Int32?
+    @press_col : Int32?
 
     def initialize(@key : Tessell::UI::UiKey, @sheet : Sheet,
                    @clipboard : Tessell::Kit::Clipboard = Tessell::Kit::MemoryClipboard.new,
@@ -84,9 +83,8 @@ module SheetDemo
       @hover_col = nil
       @drag_mode = DragMode::None
       @drag_thumb_offset = 0.0_f32
-      @last_click_ms = -10_000_i64
-      @last_click_row = -1
-      @last_click_col = -1
+      @press_row = nil
+      @press_col = nil
       @on_before_change = nil
       @on_change = nil
       @on_selection_change = nil
@@ -140,9 +138,15 @@ module SheetDemo
       ensure_visible
     end
 
+    # Root#refresh_a11y_meta 用本方法（而非 emit 里的声明）写角色，
+    # 两处必须一致。
+    def a11y_role : Tessell::A11y::Role
+      Tessell::A11y::Role::Grid
+    end
+
     def emit(b : Tessell::UI::Builder, ctx : Tessell::Kit::Context) : Nil
       b.node(@key, @bounds, paint: paint_token,
-        a11y_role: Tessell::A11y::Role::Group,
+        a11y_role: Tessell::A11y::Role::Grid,
         a11y_name: "Sheet grid",
         a11y_value: a11y_value,
         a11y_focusable: focusable?,
@@ -159,6 +163,49 @@ module SheetDemo
 
     def a11y_value : String
       "#{address} #{sheet.value(@active_row, @active_col).display}"
+    end
+
+    # 二维网格语义（tessell issue #31）：provider 直接映射 UIA DataItem /
+    # NSAccessibility GridCell / AT-SPI TableCell，不必解析拼接字符串。
+    # row/col 是 0 基逻辑索引；row_index_text/col_index_text 是用户可见的
+    # "1"/"A"，读屏器念数字时用前者、念地址时用后者。
+    def a11y_row : Int32?
+      @active_row
+    end
+
+    def a11y_col : Int32?
+      @active_col
+    end
+
+    def a11y_row_count : Int32?
+      @sheet.row_count
+    end
+
+    def a11y_col_count : Int32?
+      @sheet.col_count
+    end
+
+    def a11y_row_index_text : String?
+      (@active_row + 1).to_s
+    end
+
+    def a11y_col_index_text : String?
+      Formula.col_label(@active_col)
+    end
+
+    def a11y_selected : Bool?
+      true
+    end
+
+    def a11y_active_cell : Bool?
+      true
+    end
+
+    # 虚拟化可视窗口在逻辑行总量中的起点（issue #31）：只在滚动后偏离
+    # 0 时有意义。
+    def a11y_first_visible_index : Int32?
+      first_row, _last = @model_y.visible_range(@row_height, @sheet.row_count)
+      first_row
     end
 
     def address(row : Int32 = @active_row, col : Int32 = @active_col) : String
@@ -228,7 +275,12 @@ module SheetDemo
 
     def begin_edit(clear : Bool = false, initial : String? = nil) : Nil
       text = clear ? "" : @sheet.raw(@active_row, @active_col)
-      @editing = Tessell::Kit::TextEditing.new(text)
+      @editing = Tessell::Kit::TextEditing.new(text).tap do |editing|
+        # 编辑态 Tab 归表格导航所有（提交并右移，issue #16）。在库层面显式
+        # 声明 Reject（issue #32），而不是靠"insert 恰好拒绝 \t"的隐式行为：
+        # 语义变了（比如改成 Insert）不会被静默吞掉。
+        editing.tabs = Tessell::Kit::TabBehavior::Reject
+      end
       @editing.not_nil!.insert(initial) if initial
       ensure_visible
       notify_edit
@@ -262,12 +314,25 @@ module SheetDemo
       when Tessell::Kit::Event::Kind::PointerMove
         pointer_move(event, ctx)
       when Tessell::Kit::Event::Kind::PointerUp
-        if @drag_mode != DragMode::None
-          @drag_mode = DragMode::None
-          true
-        else
-          false
+        pressed = @press_row
+        pressed_col = @press_col
+        @press_row = nil
+        @press_col = nil
+        was_pressed = @drag_mode != DragMode::None
+        @drag_mode = DragMode::None
+        # 双击进入编辑（issue #20）：Router 判定的 click_count 只在 PointerUp
+        # 有效，且它已把「同目标 + 时间窗 + 位移上限 + 同修饰键」判完。
+        # 这里再要求按下与释放落在同一格：跨越单元格的拖选收尾不该进编辑。
+        if event.click_count >= 2 && pressed && pressed_col
+          row = row_at_y(event.y)
+          col = col_at_x(event.x)
+          if row == pressed && col == pressed_col
+            select_cell(row.not_nil!, col.not_nil!, extending: false)
+            begin_edit
+            return true
+          end
         end
+        was_pressed
       when Tessell::Kit::Event::Kind::PointerCancel
         @drag_mode = DragMode::None
         false
@@ -368,18 +433,12 @@ module SheetDemo
       elsif body.contains?(point)
         if row = row_at_y(event.y)
           if col = col_at_x(event.x)
-            double_click = @last_click_row == row && @last_click_col == col &&
-                           ctx.now_ms - @last_click_ms <= 400_i64
-            @last_click_ms = ctx.now_ms
-            @last_click_row = row
-            @last_click_col = col
-            if double_click
-              select_cell(row, col, extending: false)
-              begin_edit
-            else
-              select_cell(row, col, extending: event.shift?)
-              @drag_mode = DragMode::Select unless event.shift?
-            end
+            # issue #20：双击判定由 Router 承担（同目标＋时间窗＋位移上限，
+            # 修饰键变化会打断链路），组件不再自存 last_click 时间戳。
+            @press_row = row
+            @press_col = col
+            select_cell(row, col, extending: event.shift?)
+            @drag_mode = DragMode::Select unless event.shift?
             return true
           end
         end

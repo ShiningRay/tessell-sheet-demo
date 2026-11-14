@@ -3,13 +3,12 @@ require "tessell/kit"
 require "./grid"
 
 module SheetDemo
-  # 统一的单行文本垂直居中（tessell 0.2.0, issue #6）：用 FontMetrics 的
-  # ascent/descent 计算基线，不再用 `-fs * 0.1` 之类的经验系数。
+  # 统一的单行文本垂直居中：直接委托 tessell 的 TextDrawing.middle_baseline
+  # （issue #19），与 Button 等控件同口径，不在应用里维护第二份公式。
   module TextBaseline
     def self.centered(ctx : Tessell::Kit::Context, rect : Tessell::Rect,
                       size : Float32) : Float32
-      m = ctx.text_metrics(size)
-      rect.origin.y + (rect.size.height - (m.ascent + m.descent)) / 2.0_f32 + m.ascent
+      Tessell::Kit::TextDrawing.middle_baseline(rect, ctx.text_metrics(size))
     end
   end
 

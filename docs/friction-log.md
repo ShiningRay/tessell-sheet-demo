@@ -5,9 +5,10 @@
 
 环境：macOS arm64、Crystal 1.21.1、Retina scale=2。
 
-**状态（2026-11-14 更新）**：Tessell 已发布 v0.2.0，下列 5 条全部在上游修复或补齐。
-demo 已把临时绕过全部替换为正式 API，`shard.yml` 固定到 `tag: v0.2.0`。
-每节末尾的「v0.2.0 落地」写明实际采用的接口与移除的 workaround。
+**状态（2026-11-15 更新）**：Tessell v0.2.0 之后 25 个提交（`64eb5b1`）把
+#19–#32 全部实现。demo 已迁移并删掉所有相关 workaround，`shard.yml` 用
+`commit: 64eb5b1` 固定（尚无更新 tag）。每节末尾的「v0.2.0 落地」写明实际
+采用的接口；「64eb5b1 落地」写明这一轮的替换。
 
 | # | 主题 | 上游版本 | Issue |
 |---|---|---|---|
@@ -91,43 +92,75 @@ v0.2.0 把这些写进 `docs/usage.md` 的「写示例常撞的 Crystal 编译�
 - **`SoftwareBackend`（#10）**：新增 `spec/render_spec.cr`，在纯 CPU 后端断言
   选区填充、暗色 surface、活动单元格边框与画布底色。
 
-## 仍然存在的缺口（v0.2.0 之后新记录）
+## 64eb5b1 落地（v0.2.0 之后 25 个提交）
 
-全部已提为 issue（#19–#32，其中 #28 是上游同期自提）。每条都附了实测输出与最小复现。
+这一轮上游把 #19–#32 全做完了。迁移时撞到的破坏性变更与替换：
 
-| Issue | 缺口 |
-|---|---|
-| [#19](https://github.com/ShiningRay/tessell/issues/19) | 三套行高口径并存：`ctx.line_height`（1.25×）与 `font_metrics`/`measure`（FT metrics）不一致；`Text`/`Button`/`Input` 仍用 `fs*0.1` / `top+fs` 猜基线 |
-| [#20](https://github.com/ShiningRay/tessell/issues/20) | `Kit::Event` 丢失输入语义：Router 有双击判定与 `timestamp_ms`/`repeat`，`Root#to_kit` 不透传 |
-| [#21](https://github.com/ShiningRay/tessell/issues/21) | `DrawList` 的 Text 命令丢弃文本内容：宿主实现 #15 交错提交必须自建平行 batch 数组 |
-| [#22](https://github.com/ShiningRay/tessell/issues/22) | `sync_atlas_dirty` 只在 `GLBackend` 上：`Backend` 抽象缺增量 atlas 同步 |
-| [#23](https://github.com/ShiningRay/tessell/issues/23) | `Kit::Theme` ↔ `Render::Theme` 往返丢信息：`surface` 被 `bg` 覆盖 |
-| [#24](https://github.com/ShiningRay/tessell/issues/24) | `Context` 文本测量缓存无上限无观测，`clear_text_cache` 无调用契约 |
-| [#25](https://github.com/ShiningRay/tessell/issues/25) | `PaintListPainter` 与 `DrawListPainter` 的 clip 语义不一致（文本裁切断言误报通过） |
-| [#26](https://github.com/ShiningRay/tessell/issues/26) | `Event::Kind::Focus` 存在但永不投递：`sync_focus` 只调 `on_focus_changed` |
-| [#27](https://github.com/ShiningRay/tessell/issues/27) | `Kit::Key` 未跟随 `Input::KeyCode` 扩展：`Digit0-9`/`F1-F4`/`KeyT` 全落到 `Unknown` |
-| [#28](https://github.com/ShiningRay/tessell/issues/28) | `Backend` 缺外部纹理通道：`DrawList` 无纹理四边形命令（上游同期自提，位图类控件无地基） |
-| [#29](https://github.com/ShiningRay/tessell/issues/29) | 字体栈到不了组件层：`Painter#text` 无 `font_id`，`Kit::Text`/`Button` 无法声明粗体 |
-| [#30](https://github.com/ShiningRay/tessell/issues/30) | `Root`/`Context` 的 `scale` 只读：DPI 变化只能重建 Root，焦点与编辑状态丢失 |
-| [#31](https://github.com/ShiningRay/tessell/issues/31) | A11y 缺二维网格语义：`Role` 无 `Grid`/`GridCell`，`Meta` 无 row/col |
-| [#32](https://github.com/ShiningRay/tessell/issues/32) | 编辑态缺 Tab 语义：`TextEditing` 允许 tab 但无制表位，`Input` 不处理 Tab |
+### 破坏性变更
 
-### 对上一轮的更正
+| 变更 | 症状 | 处理 |
+|---|---|---|
+| `Kit::Painter#text` 新增 `font_id : Int32`，`Painter` 新增 abstract `image` | 直接编译失败（abstract method not implemented） | 两个都实现；`image` 显式 `raise`（见 #45） |
+| `Painter#text` 的坐标改为**逻辑单位** | 我在 `text()` 里乘了一次 scale、`flush` 里又乘一次 → 文字放大 2 倍并整体偏移 | 命令保持逻辑单位，设备换算只在 `flush` 做 |
+| `draw_text(batch_count:)` 是开区间上界 | 传增量（delta）→ 文字重影 | 传 `after`（`batch_count` 的绝对值） |
+| `draw_text(clip:)` 要设备像素 | `DrawListPainter#push_clip` 已换算过，`flush` 再 `scale_rect` → 网格内容被裁到只剩开头几行 | 原样透传 `cmd.clip` |
+
+第二条和第四条特别值得记：它们不会编译报错，只会让画面错得很像"框架 bug"。
+我一度以为是上游布局回归，直到把 v0.2.0 的二进制跑出来逐张对比才定位到是自己的双重缩放。
+
+### 删掉的 workaround
+
+- **#21**：`GLPainter` 的 `@text_marks` / `@submitted_batches` 整组删除。`Render::DrawCmd`
+  现在有 `text` / `font_size` / `font_id`（存进 `atlas_id`），`flush` 单遍遍历即可。
+- **#20**：`SheetGrid` 的 `@last_click_ms` / `@last_click_row` / `@last_click_col`
+  删除，改用 `Event#click_count`。额外保留一条约束：按下与释放必须在同一格，
+  否则拖选收尾会被 Router 的 `click_count` 误判成双击。
+- **#22**：`GLPainter#flush` 的参数类型从 `GL::GLBackend` 收窄回 `Render::Backend`。
+- **#30**：窗口 resize / 跨 DPI 不再 `build_root` + `on_root_ready` 重建，
+  改调 `Root#scale=`。`spec/grid_spec.cr` 有一条断言锁住「scale 变化后编辑态与
+  焦点仍在」。
+
+### 采用的接口
+
+- **#19**：`TextBaseline.centered` 直接委托 `TextDrawing.middle_baseline`。
+- **#31**：`SheetGrid` 的 `a11y_role` 改为 `Role::Grid`，并实现 `a11y_row` /
+  `a11y_col` / `a11y_row_count` / `a11y_col_count` / `a11y_row_index_text` /
+  `a11y_col_index_text` / `a11y_selected` / `a11y_active_cell` /
+  `a11y_first_visible_index`。注意 `Root#refresh_a11y_meta` 读的是组件方法，
+  不是 `emit` 里 `b.node` 的声明——两处必须一致，否则 a11y 树里仍是 `Group`。
+- **#32**：`begin_edit` 显式设 `TextEditing#tabs = TabBehavior::Reject`。
+- **#29**：`GLPainter` 接受 `font_id` 并持有 `Hash(Int32, TextRenderer)`。
+  demo 仍是单 face（只有 `Arial Unicode`），所以实际只有 id 0；链路已就位。
+
+## 仍然存在的缺口
+
+这一轮迁移中新发现 3 条，全部已提 issue（附实测输出与最小复现）。
+
+| Issue | 缺口 | demo 侧处理 |
+|---|---|---|
+| [#45](https://github.com/ShiningRay/tessell/issues/45) | `GLBackend` 完全没有外部纹理通道：`create_texture` 落到基类返回 0，`draw_draw_list` 的 `case` 里没有 `CmdKind::Image` 分支，命令走到 `else` 静默丢弃 | `GLPainter#image` 显式 `raise`，让"图没显示"立刻可见 |
+| [#46](https://github.com/ShiningRay/tessell/issues/46) | `GLBackend#stats.submitted_quads` 被逐次 `draw_text` 清零（`draw_batches_all` / `draw_batches_with_dirty` 开头都 `= 0`），交错提交时帧统计只反映最后一次调用 | 无（只影响 F1 overlay 的读数）；实测帧末 `quads=10`，实际近 200 个字形四边形 |
+| [#47](https://github.com/ShiningRay/tessell/issues/47) | 宿主不透传 `timestamp_ms` 时 `Router` 的双击判定恒为 false（`event.timestamp_ms > 0 && @last_up_ts > 0`），`click_count` 永远 1，且没有任何诊断 | `pump_events` 透传 SDL 的 `timestamp` 与 `repeat`（官方 `kit_sdl_host` 的指针事件已透传，但它的 `TEXTINPUT` 没有） |
+
+### 顺带发现（未单开 issue）
+
+- `examples/lib/kit_sdl_host.cr:489` 在改成 `App::Runner` 后仍打印 `frames=#{frames}`，
+  `frames` 局部变量已不存在 → `examples/app_calculator.cr` 编译失败。
+  替代应为 `runner.frame_count`。
+- `examples/lib/kit_sdl_host.cr` 的 `GLPainter` 没有实现 `image`（`Painter` 新增
+  的 abstract 方法），也没有把 `text()` 的命令载荷改成逻辑单位（它仍在 `text()`
+  里 `* @scale` 再 `@draw.text(dx, dy, ..., px_size.to_f32)`）。#21 之后宿主应该
+  让命令保持逻辑单位、在 `flush` 里换算一次——官方的单 face 示例宿主没跟上。
+- `examples/lib/kit_sdl_host.cr` 的 `image` 缺失与 `frames` 变量同时修掉后
+  （实测把 `frames` 换成 `runner.frame_count` 即可编译通过），`app_calculator`
+  才能构建；两个问题叠加使示例集当前是坏的。
+
+## 对上一轮的更正
 
 上一版 friction-log 写的「`tools/lib/png.cr` 不在 shard require 路径」是**误判**。
 `require "tessell/tools/lib/png"` 在 shard 消费者里可以正常工作（shard 会把整个仓库
 放进 `lib/tessell/`，Crystal 的 require 解析能到 `tools/`）。demo 已删掉自带的
 `src/sheet_demo/png.cr`，改回上游 `TessellPNG.write`，`--screenshot=x.png` 行为不变。
 
-demo 侧对这些缺口的处理：
-
-- **#19**：`TextBaseline.centered` 用 `ctx.text_metrics` 计算基线（组件内已修正），
-  但 `Kit::Text`/`Button`/`Input` 仍是框架内置的近似公式。
-- **#20**：`SheetGrid` 自己维护 `@last_click_ms` 判断双击。
-- **#21**：宿主维护 `@text_marks` 与 `@draw.list` 两份平行数组。
-- **#22**：`GLPainter#flush` 绑定 `GL::GLBackend` 具体类型。
-- **#23**：网格线读 `ctx.render_theme.grid`，其余色读 `ctx.theme.palette`，两者并存。
-- **#24**：不在 demo 内清理（单表 200×26，文本集合有界）。
-- **#25**：`spec/render_spec.cr` 改用 `DrawListPainter + SoftwareBackend`，不用 `PaintListPainter` 断言 clip。
-- **#26**：依赖 `on_focus_changed`，不使用 `handle(Focus)`。
-- **#27**：Cmd+S/O/N/Y 仍在 SDL 层读原始 keysym 后回调。
+因为这次迁移把 #20/#21/#22/#24/#27/#31/#32 等全部落地，v0.2.0 版本里
+「demo 侧对这些缺口的处理」那一整段绕过清单已经全部失效，本文件不再保留。

@@ -211,3 +211,162 @@ describe "SheetDemo::SheetGrid painting" do
     grid.paint_token.should_not eq(before)
   end
 end
+
+describe "SheetDemo::SheetGrid pointer semantics" do
+  it "enters edit mode on a double click reported by the router" do
+    grid = SheetSpecHelpers.grid(SheetDemo::Sheet.new(20, 8))
+    ctx = SheetSpecHelpers.context
+    x = 56.0_f32 + 60.0_f32
+    y = 32.0_f32 + 28.0_f32 * 3 + 4.0_f32
+    down = Tessell::Kit::Event.pointer(Tessell::Kit::Event::Kind::PointerDown, x, y)
+    up1 = Tessell::Kit::Event.new(Tessell::Kit::Event::Kind::PointerUp, x, y)
+    up2 = Tessell::Kit::Event.new(Tessell::Kit::Event::Kind::PointerUp, x, y, 0, nil, nil,
+      Tessell::Kit::Modifiers.none, 0.0_f32, 0.0_f32, 2, 120_i64)
+    grid.handle(down, ctx)
+    grid.handle(up1, ctx)
+    grid.editing?.should be_false
+    grid.handle(down, ctx)
+    grid.handle(up2, ctx)
+    grid.editing?.should be_true
+    grid.address.should eq("A4")
+  end
+
+  it "does not enter edit mode after a drag that ends on another cell" do
+    grid = SheetSpecHelpers.grid(SheetDemo::Sheet.new(20, 8))
+    ctx = SheetSpecHelpers.context
+    x1 = 56.0_f32 + 60.0_f32
+    y1 = 32.0_f32 + 28.0_f32 * 3 + 4.0_f32
+    x2 = 56.0_f32 + 60.0_f32
+    y2 = 32.0_f32 + 28.0_f32 * 5 + 4.0_f32
+    grid.handle(Tessell::Kit::Event.pointer(Tessell::Kit::Event::Kind::PointerDown, x1, y1), ctx)
+    grid.handle(Tessell::Kit::Event.pointer(Tessell::Kit::Event::Kind::PointerMove, x2, y2), ctx)
+    up = Tessell::Kit::Event.new(Tessell::Kit::Event::Kind::PointerUp, x2, y2, 0, nil, nil,
+      Tessell::Kit::Modifiers.none, 0.0_f32, 0.0_f32, 2, 200_i64)
+    grid.handle(up, ctx)
+    grid.editing?.should be_false
+  end
+end
+
+describe "SheetDemo::SheetGrid accessibility metadata" do
+  it "reports 2D grid semantics instead of a flat Group node" do
+    grid = SheetSpecHelpers.grid(SheetDemo::Sheet.new(20, 8))
+    ctx = SheetSpecHelpers.context
+    grid.handle(Tessell::Kit::Event.key_down(Tessell::Kit::Key::Right), ctx)
+    grid.handle(Tessell::Kit::Event.key_down(Tessell::Kit::Key::Down), ctx)
+    grid.a11y_row.should eq(1)
+    grid.a11y_col.should eq(1)
+    grid.a11y_row_count.should eq(20)
+    grid.a11y_col_count.should eq(8)
+    grid.a11y_row_index_text.should eq("2")
+    grid.a11y_col_index_text.should eq("B")
+    grid.a11y_selected.should eq(true)
+    grid.a11y_active_cell.should eq(true)
+    grid.a11y_first_visible_index.should eq(0)
+  end
+
+  it "moves first_visible_index when scrolled" do
+    grid = SheetSpecHelpers.grid(SheetDemo::Sheet.new(200, 8))
+    ctx = SheetSpecHelpers.context
+    grid.handle(Tessell::Kit::Event.wheel(400.0_f32, 300.0_f32, 0.0_f32, -560.0_f32), ctx)
+    grid.a11y_first_visible_index.should eq(20)
+  end
+
+  it "emits Grid role and grid metadata in the a11y tree" do
+    sheet_app = SheetDemo::SheetApp.new(File.join(Dir.tempdir, "tessell-sheet-grid-a11y.csv"))
+    root = sheet_app.build_root(Tessell::Kit::StubTextMetrics.new,
+      Tessell::Kit::MemoryClipboard.new)
+    root.layout(1180.0_f32, 760.0_f32)
+    root.build
+    sink = [] of Tessell::A11y::Node
+    root.a11y_emit(sink)
+    node = sink.find { |n| n.name == "Sheet grid" }
+    node.should_not be_nil
+    node = node.not_nil!
+    node.role.should eq(Tessell::A11y::Role::Grid)
+    node.row_count.should eq(sheet_app.grid.sheet.row_count)
+    node.col_count.should eq(sheet_app.grid.sheet.col_count)
+    node.row_index_text.should eq("1")
+    node.col_index_text.should eq("A")
+  end
+end
+
+describe "SheetDemo::SheetGrid tab handling" do
+  it "rejects a literal tab from text input instead of inserting it" do
+    grid = SheetSpecHelpers.grid(SheetDemo::Sheet.new(20, 8))
+    ctx = SheetSpecHelpers.context
+    grid.handle(Tessell::Kit::Event.text_input("ab"), ctx)
+    grid.handle(Tessell::Kit::Event.text_input("\t"), ctx)
+    grid.editing_text.should eq("ab")
+    grid.sheet.raw(0, 0).should eq("")
+  end
+
+  it "commits and moves right on Tab while editing" do
+    grid = SheetSpecHelpers.grid(SheetDemo::Sheet.new(20, 8))
+    ctx = SheetSpecHelpers.context
+    grid.handle(Tessell::Kit::Event.text_input("7"), ctx)
+    grid.handle(Tessell::Kit::Event.key_down(Tessell::Kit::Key::Tab), ctx)
+    grid.editing?.should be_false
+    grid.sheet.raw(0, 0).should eq("7")
+    grid.address.should eq("B1")
+  end
+end
+
+describe "SheetDemo::SheetApp double click through the router" do
+  it "opens the editor when the real router reports a double click" do
+    sheet_app = SheetDemo::SheetApp.new(File.join(Dir.tempdir, "tessell-sheet-dblclick.csv"))
+    root = sheet_app.build_root(Tessell::Kit::StubTextMetrics.new,
+      Tessell::Kit::MemoryClipboard.new)
+    root.layout(1180.0_f32, 760.0_f32)
+    root.build
+    cell = sheet_app.grid.cell_rect(3, 0)
+    x = cell.origin.x + 10.0_f32
+    y = cell.origin.y + 10.0_f32
+    down = ->(t : Int64) do
+      Tessell::Input::Event.new(Tessell::Input::Event::Kind::PointerDown, x, y, 0,
+        nil, nil, Tessell::Input::Modifiers.none, 0.0_f32, 0.0_f32, t)
+    end
+    up = ->(t : Int64) do
+      Tessell::Input::Event.new(Tessell::Input::Event::Kind::PointerUp, x, y, 0,
+        nil, nil, Tessell::Input::Modifiers.none, 0.0_f32, 0.0_f32, t)
+    end
+    root.handle(down.call(1_000_i64))
+    root.handle(up.call(1_010_i64))
+    sheet_app.grid.editing?.should be_false
+    root.handle(down.call(1_100_i64))
+    root.handle(up.call(1_120_i64))
+    sheet_app.grid.editing?.should be_true
+    sheet_app.grid.address.should eq("A4")
+    sheet_app.grid.editing_text.should eq("Revenue")
+  end
+
+  it "keeps focus and edit state across a scale change" do
+    sheet_app = SheetDemo::SheetApp.new(File.join(Dir.tempdir, "tessell-sheet-scale.csv"))
+    root = sheet_app.build_root(Tessell::Kit::StubTextMetrics.new,
+      Tessell::Kit::MemoryClipboard.new, 1.0_f32)
+    root.layout(1180.0_f32, 760.0_f32)
+    root.build
+    root.focus(sheet_app.grid)
+    sheet_app.grid.begin_edit
+    sheet_app.grid.editing_text.should eq("Tessell Quarterly Budget")
+    root.scale = 2.0_f32
+    root.build
+    sheet_app.grid.editing?.should be_true
+    root.focused_component.should be(sheet_app.grid)
+  end
+end
+
+describe "SheetDemo::SheetGrid drag then double click" do
+  it "does not open the editor when a drag is followed by a double-click report on another cell" do
+    grid = SheetSpecHelpers.grid(SheetDemo::Sheet.new(20, 8))
+    ctx = SheetSpecHelpers.context
+    x = 56.0_f32 + 60.0_f32
+    y1 = 32.0_f32 + 28.0_f32 * 3 + 4.0_f32
+    y2 = 32.0_f32 + 28.0_f32 * 5 + 4.0_f32
+    grid.handle(Tessell::Kit::Event.pointer(Tessell::Kit::Event::Kind::PointerDown, x, y1), ctx)
+    grid.handle(Tessell::Kit::Event.pointer(Tessell::Kit::Event::Kind::PointerMove, x, y2), ctx)
+    grid.handle(Tessell::Kit::Event.new(Tessell::Kit::Event::Kind::PointerUp, x, y2, 0, nil, nil,
+      Tessell::Kit::Modifiers.none, 0.0_f32, 0.0_f32, 2, 200_i64), ctx)
+    grid.editing?.should be_false
+    grid.selection_bounds.should eq({3, 5, 0, 0})
+  end
+end

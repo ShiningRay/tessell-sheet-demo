@@ -201,23 +201,20 @@ module SheetDemo
 
     @draw : Tessell::Kit::DrawListPainter
     @renderer : Tessell::Render::TextRenderer
+    @renderers : Hash(Int32, Tessell::Render::TextRenderer)
     @atlas : Tessell::Text::GlyphAtlas
     @width : Int32
     @height : Int32
     @sink : Array(Tessell::Text::GlyphPlacement)
-    # Per-text-call batch boundary snapshots: text stays batched, but flush
-    # splits at each text() call so shapes and text submit in exact command
-    # order (tessell 0.2.0 Painter contract, issue #15).
-    @text_marks : Array(Int32)
-    @submitted_batches : Int32
 
     def initialize(@renderer : Tessell::Render::TextRenderer,
                    @atlas : Tessell::Text::GlyphAtlas,
-                   @width : Int32, @height : Int32, @scale : Float32)
+                   @width : Int32, @height : Int32, @scale : Float32,
+                   renderers : Hash(Int32, Tessell::Render::TextRenderer)? = nil)
       @draw = Tessell::Kit::DrawListPainter.new
       @sink = [] of Tessell::Text::GlyphPlacement
-      @text_marks = [] of Int32
-      @submitted_batches = 0
+      @renderers = renderers || {0 => @renderer}
+      @renderers[0] ||= @renderer
     end
 
     def resize(width : Int32, height : Int32, scale : Float32) : Nil
@@ -249,17 +246,13 @@ module SheetDemo
         color, width * @scale)
     end
 
+    # font_id 来自 Kit 的 FontWeight→face 解析（issue #29）。宿主为每个 face
+    # 建一个 TextRenderer；单 face 时只有 id 0。
+    # 命令里的坐标/字号保持逻辑单位（Painter 契约）——与 fill_rect 等原语
+    # 一致；设备像素换算统一在 flush 里做一次，避免双重缩放。
     def text(x : Float32, baseline_y : Float32, text : String,
-             color : UInt32, size : Float32) : Nil
-      px_size = (size * @scale).round.to_i
-      return if px_size <= 0
-      dx = x * @scale
-      dy = baseline_y * @scale
-      @renderer.append_text_cached(@sink, text, dx, dy, px_size, @width, @height, color)
-      # Marker in the DrawList records call order and carries the active clip;
-      # draw_draw_list skips Text commands, so it is never drawn as geometry.
-      @draw.text(dx, dy, text, color, px_size.to_f32)
-      @text_marks << @renderer.batch_count
+             color : UInt32, size : Float32, font_id : Int32 = 0) : Nil
+      @draw.text(x, baseline_y, text, color, size, font_id)
     end
 
     def push_clip(rect : Tessell::Rect) : Nil
@@ -270,23 +263,44 @@ module SheetDemo
       @draw.pop_clip
     end
 
-    def flush(backend : Tessell::Render::GL::GLBackend) : Nil
-      # Atlas sync is revision-driven: page_count is not a change signal
-      # (tessell 0.2.0 issue #1).
-      backend.sync_atlas_dirty(@atlas)
-      @submitted_batches = 0
+    # Painter 契约要求实现 image（issue #28）。GLBackend 尚未实现外部纹理
+    # 通道（create_texture 走基类返回 0），所以这里显式失败而不是静默跳过：
+    # 静默 no-op 会让"图没显示"变成难查的空现象。
+    def image(texture_id : Int32, bounds : Tessell::Rect,
+              tint : UInt32 = 0xffffffff_u32, src : Tessell::Rect? = nil) : Nil
+      raise "GLPainter#image: GLBackend has no external texture channel yet " \
+            "(texture_id=#{texture_id}); see tessell issue about create_texture"
+    end
+
+    # 单遍遍历命令列表即可（issue #21）：Text 命令自带文本/字号/font_id/clip。
+    # 形状段连续提交；遇到 Text 就地 shape、增量同步 atlas（未变化即 no-op，
+    # issue #22），再提交该命令自己的批次并按 clip scissor。
+    def flush(backend : Tessell::Render::Backend) : Nil
       list = @draw.list
       seg = 0
       i = 0
-      mark = 0
       while i < list.size
         cmd = list[i]
-        if cmd.kind == Tessell::Render::CmdKind::Text && mark < @text_marks.size
+        if cmd.kind == Tessell::Render::CmdKind::Text
           backend.draw_draw_list(list, seg, i - seg) if i > seg
-          backend.draw_text(@renderer.vertices, @renderer.batch_runs,
-            @text_marks[mark], @submitted_batches, cmd.clip)
-          @submitted_batches = @text_marks[mark]
-          mark += 1
+          renderer = @renderers[cmd.atlas_id]? || @renderer
+          before = renderer.batch_count
+          # DrawCmd 存的是逻辑单位（Painter 契约），shape 需要设备像素。
+          px_size = (cmd.font_size * @scale).round.to_i
+          if px_size > 0
+            renderer.append_text_cached(@sink, cmd.text,
+              cmd.bounds.origin.x * @scale, cmd.bounds.origin.y * @scale,
+              px_size, @width, @height, cmd.color)
+          end
+          after = renderer.batch_count
+          if after > before
+            backend.sync_atlas_dirty(@atlas)
+            # draw_text 的 batch_count 是开区间上界（[from, batch_count)），
+            # 不是增量条数——传 delta 会重复绘制已有批次。
+            # cmd.clip 已在 push_clip 里换算成设备像素（与形状命令同源），
+            # scissor_params 不再缩放——这里原样传。
+            backend.draw_text(renderer.vertices, renderer.batch_runs, after, before, cmd.clip)
+          end
           seg = i + 1
         end
         i += 1
@@ -294,7 +308,7 @@ module SheetDemo
       backend.draw_draw_list(list, seg, list.size - seg) if list.size > seg
       @draw.reset
       @renderer.reset
-      @text_marks.clear
+      @renderers.each_value(&.reset)
     end
 
     def clip_depth : Int32
@@ -433,12 +447,17 @@ module SheetDemo
         if @resize_pending
           update_sizes(window, pointerof(logical_w), pointerof(logical_h),
             pointerof(drawable_w), pointerof(drawable_h))
-          scale = device_scale(logical_w, drawable_w)
-          metrics = Tessell::Kit::CoreTextMetrics.new(measurer, 0)
-          root = @app.build_root(metrics, clipboard, scale)
-          root.layout(logical_w.to_f32, logical_h.to_f32)
+          new_scale = device_scale(logical_w, drawable_w)
+          if new_scale == scale
+            root.layout(logical_w.to_f32, logical_h.to_f32)
+          else
+            # 跨 DPI 拖动/缩放（issue #30）：Root#scale= 清文本测量缓存并重排，
+            # 焦点、编辑态、滚动位置全部保留——不再重建 Root。
+            scale = new_scale
+            root.scale = new_scale
+            root.layout(logical_w.to_f32, logical_h.to_f32)
+          end
           root.build
-          @app.on_root_ready(root)
           backend.resize(drawable_w, drawable_h)
           painter.resize(drawable_w, drawable_h, scale)
           @resize_pending = false
@@ -643,35 +662,43 @@ module SheetDemo
             next
           end
           if code = map_key(key.keysym.sym)
-            dispatch(root, Tessell::Input::Event.key_down(code, mods))
+            dispatch(root, Tessell::Input::Event.key_down(code, mods,
+              key.timestamp.to_i64, key.repeat != 0))
           end
         when SDL_KEYUP
           key = pointerof(event).as(LibSDL::KeyboardEvent*).value
           if code = map_key(key.keysym.sym)
-            dispatch(root, Tessell::Input::Event.key_up(code, modifiers(key.keysym.mod)))
+            dispatch(root, Tessell::Input::Event.new(Tessell::Input::Event::Kind::KeyUp,
+              0.0_f32, 0.0_f32, 0, code, nil, modifiers(key.keysym.mod),
+              timestamp_ms: key.timestamp.to_i64))
           end
         when SDL_TEXTINPUT
           text_event = pointerof(event).as(LibSDL::TextInputEvent*).value
           dispatch(root, Tessell::Input::Event.text_input(
-            String.new(text_event.text.to_unsafe)))
+            String.new(text_event.text.to_unsafe), timestamp_ms: text_event.timestamp.to_i64))
         when SDL_MOUSEMOTION
           motion = pointerof(event).as(LibSDL::MouseMotionEvent*).value
           @mouse_x = motion.x
           @mouse_y = motion.y
-          dispatch(root, Tessell::Input::Event.pointer_move(
-            motion.x.to_f32, motion.y.to_f32))
+          dispatch(root, Tessell::Input::Event.new(Tessell::Input::Event::Kind::PointerMove,
+            motion.x.to_f32, motion.y.to_f32, 0, nil, nil, Tessell::Input::Modifiers.none,
+            timestamp_ms: motion.timestamp.to_i64))
         when SDL_MOUSEBUTTONDOWN
           button = pointerof(event).as(LibSDL::MouseButtonEvent*).value
           @mouse_x = button.x
           @mouse_y = button.y
+          # SDL 的时间戳必须透传：Router 的双击/拖拽判定只认事件时间戳，
+          # 传 0 会让双击永不成立（issue #20 的 click_count 恒为 1）。
           dispatch(root, Tessell::Input::Event.pointer_down(
-            button.x.to_f32, button.y.to_f32, button.button.to_i32 - 1))
+            button.x.to_f32, button.y.to_f32, button.button.to_i32 - 1,
+            timestamp_ms: button.timestamp.to_i64))
         when SDL_MOUSEBUTTONUP
           button = pointerof(event).as(LibSDL::MouseButtonEvent*).value
           @mouse_x = button.x
           @mouse_y = button.y
           dispatch(root, Tessell::Input::Event.pointer_up(
-            button.x.to_f32, button.y.to_f32, button.button.to_i32 - 1))
+            button.x.to_f32, button.y.to_f32, button.button.to_i32 - 1,
+            timestamp_ms: button.timestamp.to_i64))
         when SDL_MOUSEWHEEL
           wheel = pointerof(event).as(LibSDL::MouseWheelEvent*).value
           dispatch(root, Tessell::Input::Event.wheel(@mouse_x.to_f32,

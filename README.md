@@ -116,7 +116,8 @@ tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 - 撤销是整表快照（100 步上限），不是按操作增量。
 - CSV 打开会重置窗口内数据；不保留公式外的单元格风格。
 - 真实窗口证据来自 macOS arm64 SDL2/OpenGL + Retina 2x；Windows/Linux 未实测。
-- 依赖 Tessell `tag: v0.2.0`；升到更高版本前请先跑 `crystal spec` 与截图脚本。
+- 依赖 Tessell `commit: 64eb5b1`（v0.2.0 之后 25 个提交，尚无新 tag）；
+  升到更高版本前请先跑 `crystal spec` 与截图脚本。
 - 未接平台 IME 预编辑；输入法走 SDL_TEXTINPUT 已提交文本。
 
 ## 开发摩擦
@@ -131,23 +132,32 @@ tools/export_assets.sh   # 重新生成 assets/ 下全部截图
 | [#17](https://github.com/ShiningRay/tessell/issues/17) | 二维滚动 / 冻结表头 | v0.2.0 补 `ScrollModel`，demo 已采用 |
 | [#18](https://github.com/ShiningRay/tessell/issues/18) | Crystal 语言/API 坑 | v0.2.0 已进 `docs/usage.md` |
 
-v0.2.0 之后又发现 13 条缺口（#19–#32，含 1 条上游同期自提），已全部提为 issue：
+v0.2.0 之后又发现 13 条缺口（#19–#32，含 1 条上游同期自提）。上游在
+64eb5b1 这一批提交里 13 条全部实现，demo 已全部采用：
 
-| Issue | 主题 |
-|---|---|
-| [#19](https://github.com/ShiningRay/tessell/issues/19) | 三套行高口径不一致，组件仍用经验系数猜基线 |
-| [#20](https://github.com/ShiningRay/tessell/issues/20) | `Kit::Event` 不转发双击/时间戳/repeat |
-| [#21](https://github.com/ShiningRay/tessell/issues/21) | `DrawList` 的 Text 命令丢弃文本内容 |
-| [#22](https://github.com/ShiningRay/tessell/issues/22) | `sync_atlas_dirty` 只在 `GLBackend` 上 |
-| [#23](https://github.com/ShiningRay/tessell/issues/23) | `Kit::Theme` ↔ `Render::Theme` 往返丢 `surface` |
-| [#24](https://github.com/ShiningRay/tessell/issues/24) | 文本测量缓存无上限、无观测、无失效契约 |
-| [#25](https://github.com/ShiningRay/tessell/issues/25) | `PaintListPainter` 的 clip 语义与 `DrawListPainter` 不一致 |
-| [#26](https://github.com/ShiningRay/tessell/issues/26) | `Event::Kind::Focus` 存在但永不投递 |
-| [#27](https://github.com/ShiningRay/tessell/issues/27) | `Kit::Key` 未跟随 `Input::KeyCode` 扩展 |
-| [#29](https://github.com/ShiningRay/tessell/issues/29) | 字体栈到不了组件层，无法声明粗体 |
-| [#30](https://github.com/ShiningRay/tessell/issues/30) | `Root`/`Context` 的 `scale` 只读，DPI 变化要重建 |
-| [#31](https://github.com/ShiningRay/tessell/issues/31) | A11y 缺二维网格语义 |
-| [#32](https://github.com/ShiningRay/tessell/issues/32) | 编辑态缺 Tab 语义（制表位/提交） |
+| Issue | 主题 | 状态 |
+|---|---|---|
+| [#19](https://github.com/ShiningRay/tessell/issues/19) | 三套行高口径不一致，组件仍用经验系数猜基线 | 已修，demo 改用 `TextDrawing.middle_baseline` |
+| [#20](https://github.com/ShiningRay/tessell/issues/20) | `Kit::Event` 不转发双击/时间戳/repeat | 已修，demo 删除自维护的双击时间戳 |
+| [#21](https://github.com/ShiningRay/tessell/issues/21) | `DrawList` 的 Text 命令丢弃文本内容 | 已修，demo 删除 `@text_marks` 平行数组 |
+| [#22](https://github.com/ShiningRay/tessell/issues/22) | `sync_atlas_dirty` 只在 `GLBackend` 上 | 已修，`flush` 回到 `Render::Backend` 抽象 |
+| [#23](https://github.com/ShiningRay/tessell/issues/23) | `Kit::Theme` ↔ `Render::Theme` 往返丢 `surface` | 已修 |
+| [#24](https://github.com/ShiningRay/tessell/issues/24) | 文本测量缓存无上限、无观测、无失效契约 | 已修（两代淘汰 + 命中/未命中计数） |
+| [#25](https://github.com/ShiningRay/tessell/issues/25) | `PaintListPainter` 的 clip 语义与 `DrawListPainter` 不一致 | 已修 |
+| [#26](https://github.com/ShiningRay/tessell/issues/26) | `Event::Kind::Focus` 存在但永不投递 | 已修 |
+| [#27](https://github.com/ShiningRay/tessell/issues/27) | `Kit::Key` 未跟随 `Input::KeyCode` 扩展 | 已修（`KeyCode` 的 alias） |
+| [#29](https://github.com/ShiningRay/tessell/issues/29) | 字体栈到不了组件层，无法声明粗体 | 已修，宿主侧 `font_id` 链路已接好 |
+| [#30](https://github.com/ShiningRay/tessell/issues/30) | `Root`/`Context` 的 `scale` 只读，DPI 变化要重建 | 已修，resize 不再重建 Root |
+| [#31](https://github.com/ShiningRay/tessell/issues/31) | A11y 缺二维网格语义 | 已修，网格已实现全部字段 |
+| [#32](https://github.com/ShiningRay/tessell/issues/32) | 编辑态缺 Tab 语义（制表位/提交） | 已修，`TabBehavior::Reject` 显式声明 |
+
+这一轮迁移中新发现 3 条缺口，均已提为 issue：
+
+| Issue | 主题 | 状态 |
+|---|---|---|
+| [#45](https://github.com/ShiningRay/tessell/issues/45) | `GLBackend` 没实现外部纹理通道，`Kit::Image` 静默空白 | 待修，demo 侧显式 `raise` |
+| [#46](https://github.com/ShiningRay/tessell/issues/46) | `GLBackend` 帧统计被逐次 `draw_text` 清零 | 待修 |
+| [#47](https://github.com/ShiningRay/tessell/issues/47) | 宿主不透传 `timestamp_ms` 时双击永不成立且无信号 | 待修，示例宿主同样受影响 |
 
 逐条实测与 demo 侧绕过方式见 [friction-log](docs/friction-log.md)。
 

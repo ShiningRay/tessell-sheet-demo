@@ -4,3 +4,5 @@
 *.ppm
 /sheet.csv
 .DS_Store
+*.dwarf
+/tmp/
