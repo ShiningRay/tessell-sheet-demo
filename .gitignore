@@ -1,0 +1,6 @@
+/.shards/
+/lib/
+/bin/
+*.ppm
+/sheet.csv
+.DS_Store
