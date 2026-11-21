@@ -2,5 +2,5 @@ version: 2.0
 shards:
   tessell:
     git: https://github.com/shiningray/tessell.git
-    version: 0.4.1+git.commit.f8df6aba28a15e666a661d7f44a7dee9c7a5a7e0
+    version: 0.5.0+git.commit.e1f51c3bcd38c7dd9a640f165829a12d9abac898
 
